@@ -61,6 +61,10 @@ const goal = () => n0(S0().monthlyGoal) || 1000;
 // cost of one watch: the real one if known, otherwise the estimate from Ajustes
 const costOf = (m) => (m && !isNaN(num(m.landed)) ? num(m.landed) : n0(S0().defaultCost));
 const isEst = (m) => !m || isNaN(num(m.landed));
+// pouches: a supply that goes with some sales, not a product
+const pouchCost = () => { const s = S0(); return n0(s.pouchCost !== undefined ? s.pouchCost : s.perSale); };
+const pouches = () => n0(S0().pouches);
+async function patchSettings(p) { await db.put(C.settings, { ...(db.get(C.settings, 'settings') || DEF), ...p, id: 'settings' }); }
 const profitOf = (s) => (typeof s.profit === 'number' ? s.profit : n0(s.price) - n0(s.cost));
 const on = (arr, pre, f = 'date') => arr.filter((x) => x[f] && x[f].startsWith(pre));
 
@@ -302,6 +306,7 @@ function orderBody(o, pb) {
     ${tr('Fecha', shortDate(o.date) + (o.note ? ' · ' + esc(o.note) : ''))}
     ${tr('Estado', o.status === 'recibido' ? `<span class="pos">Recibido ${shortDate(o.receivedDate)}</span>` : '<span class="warn">En camino</span>')}
     ${(o.lines || []).map((l) => { const m = model(l.modelId); return tr(esc(m ? m.name : l.name || 'Reloj'), `${n0(l.qty)} × ${eur(n0(l.unit))}`); }).join('')}
+    ${o.pouches ? tr('Bolsitas', `${n0(o.pouches.qty)} × ${eur(n0(o.pouches.unit))}`) : ''}
     ${tr('Pagado al pedir', eur(n0(o.paid)))}
     ${tr('Cobro DHL', o.status === 'recibido' ? eur(n0(o.dhl)) : '<span class="sub">al llegar</span>')}
     ${tr('Coste total', eur(cost), 'tot')}
@@ -381,7 +386,7 @@ function viewStock() {
   const chips = [['activos', 'Activos'], ['ganador', 'Ganadores'], ['test', 'Test'], ['espera', 'En espera'], ['descartado', 'Descartados'], ['todos', 'Todos']]
     .map(([v, l]) => `<button class="chip" data-a="filter" data-v="${v}" aria-pressed="${f === v}">${l}</button>`).join('');
   const rs = restockList();
-  const sumT = `<table class="xl"><tbody>${tr('En casa', home + ' uds')}${tr('En camino', trn + ' uds')}${tr('Stock a coste', eur(val))}${tr('Stock a precio de venta', eur(pot), 'tot')}</tbody></table>`;
+  const sumT = `<table class="xl"><tbody>${tr('En casa', home + ' uds')}${tr('En camino', trn + ' uds')}${tr('Stock a coste', eur(val))}${tr('Stock a precio de venta', eur(pot), 'tot')}${tr('Bolsitas en casa', `<span class="${pouches() < 5 ? 'neg' : ''}">${pouches()}</span> <span class="sub" style="display:inline">· ${eur(pouchCost())}/ud</span>`)}</tbody></table><div class="foot"><button class="lnk" data-a="settings">Cambiar bolsitas</button></div>`;
   const table = `<div class="tscroll"><table class="xl list stock"><thead><tr><th>Reloj</th><th class="n">Casa</th><th class="n">Cam.</th><th class="n">Coste</th><th class="n">Precio</th><th class="n">Vend.</th></tr></thead><tbody>${shown.map((m) => {
     const sold = L('sales').filter((s) => s.modelId === m.id).length, r = restockInfo(m), est = isEst(m);
     const stt = STATUS[m.status] ? m.status : 'test';
@@ -492,7 +497,8 @@ function sheetHTML() {
     return head('AJUSTES') + `<div class="field"><label for="s-cash">Dinero que tienes ahora mismo (€)</label><input id="s-cash" inputmode="decimal" value="${esc(String(r2(cashNow())).replace('.', ','))}"></div>
       <div class="hint">Pon lo que ves en tu cuenta ahora. Desde este momento la app suma las ventas e ingresos y resta pedidos, DHL y gastos que apuntes.</div>
       <div class="fields2">${fld('s-cushion', 'Colchón: no bajar de (€)', s.cushion)}${fld('s-goal', 'Meta de beneficio al mes (€)', s.monthlyGoal)}</div>
-      <div class="fields2">${fld('s-defcost', 'Coste por reloj si no sabes el exacto (€)', s.defaultCost)}${fld('s-persale', 'Bolsita y embalaje por venta (€)', s.perSale)}</div>
+      <div class="fields2">${fld('s-defcost', 'Coste por reloj si no sabes el exacto (€)', s.defaultCost)}<div></div></div>
+      <div class="fields2">${fld('s-pouches', 'Bolsitas en casa', pouches(), 'inputmode="numeric"')}${fld('s-pouchcost', 'Coste por bolsita (€)', pouchCost())}</div>
       <div class="hint">Con un número aproximado basta. Cuando sepas el coste real de un reloj, ponlo en Stock → Editar y se usará ese.</div>
       ${fld('s-acc', 'Cuentas de venta (separadas por comas)', (s.accounts || []).join(', '), 'autocomplete="off"')}
       <div class="err" id="sh-err"></div><button class="primary" data-a="save-settings">Guardar</button>
@@ -520,7 +526,8 @@ function saleBody(ctx) {
   if (!ms.length) return '<div class="empty">Primero crea un reloj en <b>Stock → + Reloj</b>.</div>';
   return `<div class="field"><label for="f-model">Reloj</label><select id="f-model">${ms.map((m) => `<option value="${esc(m.id)}"${m.id === pre ? ' selected' : ''}>${esc(m.name)} · ${n0(m.home)} en casa</option>`).join('')}</select></div>
     <div class="fields2">${fld('f-price', 'Vendido a (€)', '', 'inputmode="decimal" placeholder="30"')}${fld('f-cost', 'Coste del reloj (€)', '')}</div>
-    ${fld('f-extra', 'Bolsita y embalaje (€)', String(n0(S0().perSale)).replace('.', ','))}<div class="hint" id="f-esthint"></div>
+    <div class="hint" id="f-esthint"></div>
+    <label class="check"><input type="checkbox" id="f-pouch"${lsGet('lg_pouch', '1') === '1' ? ' checked' : ''}> Va con bolsita (${eur(pouchCost())} · quedan ${pouches()})</label>
     <div class="fields2">${dateFld('f-date', ctx.date)}<div class="field"><label for="f-acc">Cuenta</label><select id="f-acc">${accs.map((a) => `<option>${esc(a)}</option>`).join('')}</select></div></div>
     <label class="check"><input type="checkbox" id="f-dec" checked> Restar 1 del stock en casa</label>
     <div class="preview"><div class="kv"><span class="mut">Beneficio</span><b id="f-prev">—</b></div><div class="kv"><span class="mut">Entra en caja</span><b id="f-cash">—</b></div></div><div class="err" id="sh-err"></div>
@@ -537,6 +544,7 @@ function orderForm(ctx) {
       <button class="del" data-a="rmline" data-i="${i}" aria-label="Quitar línea" ${ctx.lines.length === 1 ? 'disabled style="opacity:.3"' : ''}>✕</button></div>
       ${l.modelId === '__new' ? `<input id="l-n-${i}" style="background:var(--surface-2);border:1px solid var(--line);border-radius:11px;padding:10px 12px;font-size:15px" placeholder="Nombre del reloj nuevo" value="${esc(l.name)}" autocomplete="off">` : ''}</div>`).join('');
   return `${lines}<div><button class="ghost" data-a="addline">+ Otra línea</button></div>
+    <div class="fields2">${fld('o-pq', 'Bolsitas (uds)', ctx.pq || '', 'inputmode="numeric" placeholder="0"')}${fld('o-pu', '€/bolsita en 1688', ctx.pu || '', 'inputmode="decimal" placeholder="0,30"')}</div>
     <div class="fields2">${fld('o-ship', 'Envío del agente (€)', ctx.ship || '', 'inputmode="decimal" placeholder="70"')}${dateFld('o-date', ctx.date)}</div>
     ${fld('o-note', 'Nota (opcional)', ctx.note || '', 'autocomplete="off" placeholder="Ej. caja DHL 4 kg"')}
     <div class="preview" id="o-prev"></div>
@@ -559,15 +567,15 @@ function incomeBody(ctx) {
 function readLines() {
   const c = st.sheet.ctx;
   c.lines = c.lines.map((l, i) => ({ modelId: sv('l-m-' + i) || l.modelId, qty: sv('l-q-' + i), unit: sv('l-u-' + i), name: sheetEl.querySelector('#l-n-' + i) ? sv('l-n-' + i) : l.name }));
-  c.ship = sv('o-ship'); c.date = sv('o-date'); c.note = sv('o-note');
+  c.ship = sv('o-ship'); c.date = sv('o-date'); c.note = sv('o-note'); c.pq = sv('o-pq'); c.pu = sv('o-pu');
   return c.lines;
 }
 function orderPreview() {
   const box = sheetEl.querySelector('#o-prev'); if (!box) return;
-  const lines = readLines(), ship = n0(sv('o-ship'));
-  const goods = sum(lines.map((l) => n0(l.qty) * n0(l.unit))), units = sum(lines.map((l) => n0(l.qty)));
+  const lines = readLines(), ship = n0(sv('o-ship')), pg = n0(sv('o-pq')) * n0(sv('o-pu'));
+  const wgoods = sum(lines.map((l) => n0(l.qty) * n0(l.unit))), goods = wgoods + pg, units = sum(lines.map((l) => n0(l.qty)));
   const f = goods > 0 ? (goods + ship) / goods : 1;
-  box.innerHTML = `<div class="kv"><span class="mut">Relojes</span><b>${units} uds · ${eur(goods)}</b></div><div class="kv"><span class="mut">Pagas hoy</span><b class="neg">${eur(goods + ship)}</b></div>
+  box.innerHTML = `<div class="kv"><span class="mut">Relojes</span><b>${units} uds · ${eur(wgoods)}</b></div>${pg ? `<div class="kv"><span class="mut">Bolsitas</span><b>${n0(sv('o-pq'))} uds · ${eur(pg)}</b></div>` : ''}<div class="kv"><span class="mut">Pagas hoy</span><b class="neg">${eur(goods + ship)}</b></div>
     <div class="kv"><span class="mut">Caja después</span><b class="${cashNow() - goods - ship < 0 ? 'neg' : ''}">${eur(cashNow() - goods - ship)}</b></div>
     ${goods ? lines.filter((l) => n0(l.unit)).map((l) => { const m = model(l.modelId); return `<div class="kv"><span class="mut">Coste/ud ${esc(m ? m.name : l.name || 'nuevo')}</span><b>≈ ${eur(n0(l.unit) * f)} + DHL</b></div>`; }).join('') : ''}`;
 }
@@ -575,7 +583,7 @@ function afterSheet() {
   const sel = sheetEl.querySelector('#f-model');
   if (sel) {
     const prev = () => {
-      const p = num(sv('f-price')), c = num(sv('f-cost')) + n0(sv('f-extra')), o = $('#f-prev', sheetEl), k = $('#f-cash', sheetEl);
+      const p = num(sv('f-price')), c = num(sv('f-cost')) + ($('#f-pouch', sheetEl).checked ? pouchCost() : 0), o = $('#f-prev', sheetEl), k = $('#f-cash', sheetEl);
       k.textContent = isNaN(p) ? '—' : eur(p, true); k.className = isNaN(p) ? '' : 'pos';
       if (isNaN(p) || isNaN(c)) { o.textContent = '—'; o.className = ''; return; }
       o.textContent = eur(p - c, true); o.className = cls(p - c);
@@ -587,7 +595,7 @@ function afterSheet() {
       $('#f-dec', sheetEl).checked = !!m && n0(m.home) > 0; prev();
     };
     sel.addEventListener('change', sync_);
-    $('#f-price', sheetEl).addEventListener('input', prev); $('#f-cost', sheetEl).addEventListener('input', prev); $('#f-extra', sheetEl).addEventListener('input', prev);
+    $('#f-price', sheetEl).addEventListener('input', prev); $('#f-cost', sheetEl).addEventListener('input', prev); $('#f-pouch', sheetEl).addEventListener('change', prev);
     sync_();
   }
   if (sheetEl.querySelector('#o-prev')) {
@@ -621,8 +629,10 @@ async function saveSale() {
   if (isNaN(cost) || cost < 0) return shErr('Pon el coste puesto. Sin él no se puede calcular el beneficio.');
   if (!validDate(date)) return shErr('Pon una fecha válida.');
   const dec = $('#f-dec', sheetEl).checked && n0(m.home) > 0;
-  const extra = n0(sv('f-extra')), est = isEst(m) && r2(cost) === r2(n0(S0().defaultCost));
-  await db.put(C.sales, { date, at: nowISO(), modelId: m.id, modelName: m.name, price: r2(price), cost: r2(cost + extra), watchCost: r2(cost), extra: r2(extra), estimated: est, profit: r2(price - cost - extra), account: sv('f-acc'), fromStock: dec });
+  const withPouch = $('#f-pouch', sheetEl).checked, extra = withPouch ? pouchCost() : 0, pouchFromStock = withPouch && pouches() > 0, est = isEst(m) && r2(cost) === r2(n0(S0().defaultCost));
+  await db.put(C.sales, { date, at: nowISO(), modelId: m.id, modelName: m.name, price: r2(price), cost: r2(cost + extra), watchCost: r2(cost), extra: r2(extra), estimated: est, profit: r2(price - cost - extra), account: sv('f-acc'), fromStock: dec, pouch: withPouch, pouchFromStock });
+  lsSet('lg_pouch', withPouch ? '1' : '0');
+  if (pouchFromStock) await patchSettings({ pouches: pouches() - 1 });
   const patch = {}; if (dec) patch.home = n0(m.home) - 1; if (isNaN(num(m.landed)) && !est) patch.landed = r2(cost);
   if (Object.keys(patch).length) await db.patch(C.models, m.id, patch);
   closeSheet(); st.selDay = date; st.month = date.slice(0, 7); toast('Venta guardada · ' + eur(price - cost - extra, true));
@@ -630,6 +640,11 @@ async function saveSale() {
 async function saveOrder() {
   const lines = readLines(), ship = num(sv('o-ship')), date = sv('o-date');
   if (!validDate(date)) return shErr('Pon una fecha válida.');
+  const pq = parseInt(sv('o-pq'), 10) || 0, pu = num(sv('o-pu'));
+  if (pq > 0 && !(pu > 0)) return shErr('Pon el precio por bolsita.');
+  const used = lines.filter((l) => String(l.qty).trim() || String(l.unit).trim() || (l.modelId === '__new' && l.name));
+  if (!used.length && !pq) return shErr('Añade al menos un reloj o bolsitas.');
+  lines.length = 0; used.forEach((l) => lines.push(l));
   for (const l of lines) {
     if (l.modelId === '__new' && !l.name) return shErr('Ponle nombre al reloj nuevo.');
     if (!(parseInt(l.qty, 10) > 0)) return shErr('Pon cuántas unidades de cada reloj.');
@@ -642,11 +657,11 @@ async function saveOrder() {
     const m = model(mid);
     out.push({ modelId: mid, name: m ? m.name : l.name, qty: parseInt(l.qty, 10), unit: r2(num(l.unit)) });
   }
-  const goods = r2(sum(out.map((l) => l.qty * l.unit))), sh = isNaN(ship) ? 0 : r2(ship), f = (goods + sh) / goods;
-  await db.put(C.orders, { date, at: nowISO(), note: sv('o-note'), lines: out, goods, shipping: sh, paid: r2(goods + sh), dhl: 0, status: 'camino' });
+  const goods = r2(sum(out.map((l) => l.qty * l.unit)) + (pq ? pq * pu : 0)), sh = isNaN(ship) ? 0 : r2(ship), f = (goods + sh) / goods;
+  await db.put(C.orders, { date, at: nowISO(), note: sv('o-note'), lines: out, pouches: pq ? { qty: pq, unit: r2(pu) } : null, goods, shipping: sh, paid: r2(goods + sh), dhl: 0, status: 'camino' });
   const byModel = {}; out.forEach((l) => { byModel[l.modelId] = byModel[l.modelId] || { qty: 0, unit: l.unit }; byModel[l.modelId].qty += l.qty; });
   for (const id in byModel) { const m = model(id); await db.patch(C.models, id, { transit: n0(m && m.transit) + byModel[id].qty, landed: r2(byModel[id].unit * f) }); }
-  closeSheet(); st.tab = 'stock'; st.stockSeg = 'pedidos'; lsSet('lg_seg', 'pedidos'); location.hash = 'stock'; toast('Pedido guardado · −' + eur(goods + sh) + ' de caja');
+  closeSheet(); st.tab = 'stock'; st.stockSeg = 'pedidos'; lsSet('lg_seg', 'pedidos'); location.hash = 'stock'; renderSoon(); toast('Pedido guardado · −' + eur(goods + sh) + ' de caja');
 }
 async function saveReceive() {
   const o = db.get(C.orders, st.sheet.ctx.id); if (!o) return closeSheet();
@@ -656,7 +671,8 @@ async function saveReceive() {
   await db.patch(C.orders, o.id, { status: 'recibido', dhl: d, receivedDate: date, receivedAt: nowISO() });
   const byModel = {}; (o.lines || []).forEach((l) => { byModel[l.modelId] = byModel[l.modelId] || { qty: 0, unit: l.unit }; byModel[l.modelId].qty += n0(l.qty); });
   for (const id in byModel) { const m = model(id); if (!m) continue; await db.patch(C.models, id, { transit: Math.max(0, n0(m.transit) - byModel[id].qty), home: n0(m.home) + byModel[id].qty, landed: r2(n0(byModel[id].unit) * f) }); }
-  closeSheet(); toast('Recibido · relojes pasados a casa');
+  if (o.pouches && o.pouches.qty) await patchSettings({ pouches: pouches() + n0(o.pouches.qty), pouchCost: r2(n0(o.pouches.unit) * f) });
+  closeSheet(); toast('Recibido · pasado a casa');
 }
 async function saveSpend() {
   const amt = num(sv('x-amt')), date = sv('x-date'), c = st.sheet.ctx, kind = c.kind || 'personal';
@@ -686,8 +702,8 @@ async function saveSettings() {
   if (isNaN(cash)) return shErr('Pon el dinero que tienes ahora.');
   if (isNaN(g) || g <= 0) return shErr('Pon tu meta mensual.');
   const accs = sv('s-acc').split(',').map((s) => s.trim()).filter(Boolean);
-  const dc = num(sv('s-defcost')), ps = num(sv('s-persale'));
-  const cur = S0(), patch = { cushion: isNaN(cush) ? 0 : r2(cush), monthlyGoal: r2(g), defaultCost: isNaN(dc) ? 10 : r2(dc), perSale: isNaN(ps) ? 0 : r2(ps), accounts: accs.length ? accs : cur.accounts };
+  const dc = num(sv('s-defcost')), pc = num(sv('s-pouchcost')), pq = num(sv('s-pouches'));
+  const cur = S0(), patch = { cushion: isNaN(cush) ? 0 : r2(cush), monthlyGoal: r2(g), defaultCost: isNaN(dc) ? 10 : r2(dc), pouchCost: isNaN(pc) ? 0 : r2(pc), pouches: isNaN(pq) ? 0 : Math.max(0, Math.round(pq)), accounts: accs.length ? accs : cur.accounts };
   if (r2(cash) !== r2(cashNow())) { patch.cash = r2(cash); patch.cashAt = nowISO(); }
   await db.put(C.settings, { ...(db.get(C.settings, 'settings') || DEF), ...patch, id: 'settings' });
   closeSheet(); toast('Guardado');
@@ -720,6 +736,7 @@ async function del(col, id) {
   if (col === 'sales') {
     const s = db.get(C.sales, id); await db.remove(C.sales, id);
     const m = s && s.fromStock && model(s.modelId); if (m) await db.patch(C.models, m.id, { home: n0(m.home) + 1 });
+    if (s && s.pouchFromStock) await patchSettings({ pouches: pouches() + 1 });
     toast(m ? 'Venta borrada · +1 al stock' : 'Venta borrada'); return;
   }
   if (col === 'orders') {
