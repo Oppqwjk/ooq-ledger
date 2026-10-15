@@ -51,13 +51,16 @@ const METRICS = {
   totalProfit: 'Beneficio total acumulado',
   units: 'Relojes vendidos en total',
 };
-const DEF = { cash: 0, cashAt: '1970-01-01T00:00:00.000Z', cushion: 0, monthlyGoal: 1000, accounts: ['tictac spain', 'y2kwatches'] };
+const DEF = { cash: 0, cashAt: '1970-01-01T00:00:00.000Z', cushion: 0, monthlyGoal: 1000, defaultCost: 10, perSale: 0, accounts: ['tictac spain', 'y2kwatches'] };
 
 /* ---------------- data access ---------------- */
 const L = (k) => db.all(C[k]);
 const S0 = () => Object.assign({}, DEF, db.get(C.settings, 'settings') || {});
 const model = (id) => db.get(C.models, id);
 const goal = () => n0(S0().monthlyGoal) || 1000;
+// cost of one watch: the real one if known, otherwise the estimate from Ajustes
+const costOf = (m) => (m && !isNaN(num(m.landed)) ? num(m.landed) : n0(S0().defaultCost));
+const isEst = (m) => !m || isNaN(num(m.landed));
 const profitOf = (s) => (typeof s.profit === 'number' ? s.profit : n0(s.price) - n0(s.cost));
 const on = (arr, pre, f = 'date') => arr.filter((x) => x[f] && x[f].startsWith(pre));
 
@@ -134,7 +137,7 @@ function restockInfo(m) {
   const cover = (home + tr) / rate;
   const sug = Math.max(5, Math.ceil((rate * 30 - (home + tr)) / 5) * 5);
   const lastUnit = lastUnitPrice(m.id);
-  return { rate, recent, cover, need: cover < 10, out: home + tr === 0, sug, unit: lastUnit, cost: sug * (lastUnit ? lastUnit * 1.25 : n0(m.landed)) };
+  return { rate, recent, cover, need: cover < 10, out: home + tr === 0, sug, unit: lastUnit, cost: sug * (lastUnit ? lastUnit * 1.25 : costOf(m)) };
 }
 function lastUnitPrice(mid) {
   const os = L('orders').filter((o) => (o.lines || []).some((l) => l.modelId === mid)).sort((a, b) => b.date.localeCompare(a.date));
@@ -379,7 +382,7 @@ function viewStock() {
   const ms = L('models').slice().sort((a, b) => (SORDER[a.status] ?? 9) - (SORDER[b.status] ?? 9) || n0(a.order) - n0(b.order) || String(a.name).localeCompare(b.name));
   const live = ms.filter((m) => m.status !== 'descartado');
   const home = sum(live.map((m) => n0(m.home))), tr = sum(live.map((m) => n0(m.transit)));
-  const val = sum(live.map((m) => n0(m.home) * n0(m.landed))), pot = sum(live.map((m) => n0(m.home) * n0(m.listPrice)));
+  const val = sum(live.map((m) => n0(m.home) * costOf(m))), pot = sum(live.map((m) => n0(m.home) * n0(m.listPrice)));
   const f = st.filter, shown = ms.filter((m) => (f === 'todos' ? true : f === 'activos' ? m.status !== 'descartado' : m.status === f));
   const chips = [['activos', 'Activos'], ['ganador', 'Ganadores'], ['test', 'Test'], ['espera', 'En espera'], ['descartado', 'Descartados'], ['todos', 'Todos']]
     .map(([v, l]) => `<button class="chip" data-a="filter" data-v="${v}" aria-pressed="${f === v}">${l}</button>`).join('');
@@ -392,7 +395,7 @@ function viewStock() {
 function modelCard(m) {
   const h = n0(m.home), t = n0(m.transit);
   const sold = L('sales').filter((s) => s.modelId === m.id), sp = sum(sold.map(profitOf));
-  const Lc = num(m.landed), P = num(m.listPrice), mn = num(m.minPrice), marg = !isNaN(Lc) && !isNaN(P) ? P - Lc : NaN;
+  const Lc = costOf(m), est = isEst(m), P = num(m.listPrice), mn = num(m.minPrice), marg = !isNaN(P) ? P - Lc - n0(S0().perSale) : NaN;
   const sk = STATUS[m.status] ? m.status : 'test', r = restockInfo(m);
   const id = esc(m.id);
   return `<article class="card model${m.status === 'descartado' ? ' off' : ''}">
@@ -401,7 +404,7 @@ function modelCard(m) {
       <div class="count"><button class="step" data-a="bump" data-id="${id}" data-f="home" data-d="-1" aria-label="Quitar uno en casa">−</button><div><div class="eyebrow">En casa</div><div class="n">${h}</div></div><button class="step" data-a="bump" data-id="${id}" data-f="home" data-d="1" aria-label="Añadir uno en casa">+</button></div>
       <div class="count"><button class="step" data-a="bump" data-id="${id}" data-f="transit" data-d="-1" aria-label="Quitar uno en camino">−</button><div><div class="eyebrow">En camino</div><div class="n">${t}</div></div><button class="step" data-a="bump" data-id="${id}" data-f="transit" data-d="1" aria-label="Añadir uno en camino">+</button></div>
     </div>
-    <div class="m-meta"><span>Coste <b>${isNaN(Lc) ? 'falta' : eur(Lc)}</b></span><span>Precio <b>${isNaN(P) ? '—' : eur(P)}</b></span><span>Mín <b>${isNaN(mn) ? '—' : eur(mn)}</b></span>${isNaN(marg) ? '' : `<span>Margen <b class="pos">${eur(marg, true)}</b></span>`}</div>
+    <div class="m-meta"><span>Coste <b>${est ? '≈' + eur(Lc) : eur(Lc)}</b>${est ? ' <span class="warn">estimado</span>' : ''}</span><span>Precio <b>${isNaN(P) ? '—' : eur(P)}</b></span><span>Mín <b>${isNaN(mn) ? '—' : eur(mn)}</b></span>${isNaN(marg) ? '' : `<span>Margen <b class="pos">${eur(marg, true)}</b></span>`}</div>
     ${r && r.rate ? `<div class="m-meta"><span>Últimos 14 días <b>${r.recent}</b> vendidos</span><span>Cubre <b>${r.out ? '0' : '≈' + Math.floor(r.cover)}</b> días</span></div>` : ''}
     <div class="m-foot"><span class="mut">Vendidos <b class="num" style="color:var(--fg)">${sold.length}</b>${sold.length ? ` · <span class="num ${cls(sp)}">${eur(sp, true)}</span>` : ''}</span>
       <span style="display:flex;gap:6px">${r && r.need ? `<button class="btn-g" data-a="restock" data-id="${id}" data-q="${r.sug}">Pedir ${r.sug}</button>` : ''}<button class="ghost" data-a="model" data-id="${id}">Editar</button></span></div>
@@ -505,6 +508,8 @@ function sheetHTML() {
     return head('AJUSTES') + `<div class="field"><label for="s-cash">Dinero que tienes ahora mismo (€)</label><input id="s-cash" inputmode="decimal" value="${esc(String(r2(cashNow())).replace('.', ','))}"></div>
       <div class="hint">Pon lo que ves en tu cuenta ahora. Desde este momento la app suma las ventas e ingresos y resta pedidos, DHL y gastos que apuntes.</div>
       <div class="fields2">${fld('s-cushion', 'Colchón: no bajar de (€)', s.cushion)}${fld('s-goal', 'Meta de beneficio al mes (€)', s.monthlyGoal)}</div>
+      <div class="fields2">${fld('s-defcost', 'Coste por reloj si no sabes el exacto (€)', s.defaultCost)}${fld('s-persale', 'Bolsita y embalaje por venta (€)', s.perSale)}</div>
+      <div class="hint">Con un número aproximado basta. Cuando sepas el coste real de un reloj, ponlo en Stock → Editar y se usará ese.</div>
       ${fld('s-acc', 'Cuentas de venta (separadas por comas)', (s.accounts || []).join(', '), 'autocomplete="off"')}
       <div class="err" id="sh-err"></div><button class="primary" data-a="save-settings">Guardar</button>
       <div class="card" style="padding:14px;display:grid;gap:8px"><div class="eyebrow">Sincronización</div>
@@ -529,7 +534,8 @@ function saleBody(ctx) {
   const accs = (S0().accounts || []).concat(['Wallapop']);
   if (!ms.length) return '<div class="empty">Primero crea un reloj en <b>Stock → + Reloj</b>.</div>';
   return `<div class="field"><label for="f-model">Reloj</label><select id="f-model">${ms.map((m) => `<option value="${esc(m.id)}"${m.id === pre ? ' selected' : ''}>${esc(m.name)} · ${n0(m.home)} en casa</option>`).join('')}</select></div>
-    <div class="fields2">${fld('f-price', 'Vendido a (€)', '', 'inputmode="decimal" placeholder="30"')}${fld('f-cost', 'Coste puesto (€)', '')}</div>
+    <div class="fields2">${fld('f-price', 'Vendido a (€)', '', 'inputmode="decimal" placeholder="30"')}${fld('f-cost', 'Coste del reloj (€)', '')}</div>
+    ${fld('f-extra', 'Bolsita y embalaje (€)', String(n0(S0().perSale)).replace('.', ','))}<div class="hint" id="f-esthint"></div>
     <div class="fields2">${dateFld('f-date', ctx.date)}<div class="field"><label for="f-acc">Cuenta</label><select id="f-acc">${accs.map((a) => `<option>${esc(a)}</option>`).join('')}</select></div></div>
     <label class="check"><input type="checkbox" id="f-dec" checked> Restar 1 del stock en casa</label>
     <div class="preview"><div class="kv"><span class="mut">Beneficio</span><b id="f-prev">—</b></div><div class="kv"><span class="mut">Entra en caja</span><b id="f-cash">—</b></div></div><div class="err" id="sh-err"></div>
@@ -584,18 +590,19 @@ function afterSheet() {
   const sel = sheetEl.querySelector('#f-model');
   if (sel) {
     const prev = () => {
-      const p = num(sv('f-price')), c = num(sv('f-cost')), o = $('#f-prev', sheetEl), k = $('#f-cash', sheetEl);
+      const p = num(sv('f-price')), c = num(sv('f-cost')) + n0(sv('f-extra')), o = $('#f-prev', sheetEl), k = $('#f-cash', sheetEl);
       k.textContent = isNaN(p) ? '—' : eur(p, true); k.className = isNaN(p) ? '' : 'pos';
       if (isNaN(p) || isNaN(c)) { o.textContent = '—'; o.className = ''; return; }
       o.textContent = eur(p - c, true); o.className = cls(p - c);
     };
     const sync_ = () => {
       const m = model(sel.value), c = $('#f-cost', sheetEl);
-      c.value = m && !isNaN(num(m.landed)) ? String(m.landed).replace('.', ',') : '';
+      c.value = m ? String(costOf(m)).replace('.', ',') : '';
+      $('#f-esthint', sheetEl).textContent = isEst(m) ? 'Coste estimado (no sabes el exacto de este reloj). Cámbialo si lo sabes.' : '';
       $('#f-dec', sheetEl).checked = !!m && n0(m.home) > 0; prev();
     };
     sel.addEventListener('change', sync_);
-    $('#f-price', sheetEl).addEventListener('input', prev); $('#f-cost', sheetEl).addEventListener('input', prev);
+    $('#f-price', sheetEl).addEventListener('input', prev); $('#f-cost', sheetEl).addEventListener('input', prev); $('#f-extra', sheetEl).addEventListener('input', prev);
     sync_();
   }
   if (sheetEl.querySelector('#o-prev')) {
@@ -629,10 +636,11 @@ async function saveSale() {
   if (isNaN(cost) || cost < 0) return shErr('Pon el coste puesto. Sin él no se puede calcular el beneficio.');
   if (!validDate(date)) return shErr('Pon una fecha válida.');
   const dec = $('#f-dec', sheetEl).checked && n0(m.home) > 0;
-  await db.put(C.sales, { date, at: nowISO(), modelId: m.id, modelName: m.name, price: r2(price), cost: r2(cost), profit: r2(price - cost), account: sv('f-acc'), fromStock: dec });
-  const patch = {}; if (dec) patch.home = n0(m.home) - 1; if (isNaN(num(m.landed))) patch.landed = r2(cost);
+  const extra = n0(sv('f-extra')), est = isEst(m) && r2(cost) === r2(n0(S0().defaultCost));
+  await db.put(C.sales, { date, at: nowISO(), modelId: m.id, modelName: m.name, price: r2(price), cost: r2(cost + extra), watchCost: r2(cost), extra: r2(extra), estimated: est, profit: r2(price - cost - extra), account: sv('f-acc'), fromStock: dec });
+  const patch = {}; if (dec) patch.home = n0(m.home) - 1; if (isNaN(num(m.landed)) && !est) patch.landed = r2(cost);
   if (Object.keys(patch).length) await db.patch(C.models, m.id, patch);
-  closeSheet(); st.selDay = date; st.month = date.slice(0, 7); toast('Venta guardada · ' + eur(price - cost, true));
+  closeSheet(); st.selDay = date; st.month = date.slice(0, 7); toast('Venta guardada · ' + eur(price - cost - extra, true));
 }
 async function saveOrder() {
   const lines = readLines(), ship = num(sv('o-ship')), date = sv('o-date');
@@ -693,7 +701,8 @@ async function saveSettings() {
   if (isNaN(cash)) return shErr('Pon el dinero que tienes ahora.');
   if (isNaN(g) || g <= 0) return shErr('Pon tu meta mensual.');
   const accs = sv('s-acc').split(',').map((s) => s.trim()).filter(Boolean);
-  const cur = S0(), patch = { cushion: isNaN(cush) ? 0 : r2(cush), monthlyGoal: r2(g), accounts: accs.length ? accs : cur.accounts };
+  const dc = num(sv('s-defcost')), ps = num(sv('s-persale'));
+  const cur = S0(), patch = { cushion: isNaN(cush) ? 0 : r2(cush), monthlyGoal: r2(g), defaultCost: isNaN(dc) ? 10 : r2(dc), perSale: isNaN(ps) ? 0 : r2(ps), accounts: accs.length ? accs : cur.accounts };
   if (r2(cash) !== r2(cashNow())) { patch.cash = r2(cash); patch.cashAt = nowISO(); }
   await db.put(C.settings, { ...(db.get(C.settings, 'settings') || DEF), ...patch, id: 'settings' });
   closeSheet(); toast('Guardado');
