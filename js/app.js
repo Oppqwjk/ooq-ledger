@@ -32,7 +32,7 @@ const nowISO = () => new Date().toISOString();
 let fmtCache = {};
 function eur(v, sign) {
   if (v === null || v === undefined || isNaN(v)) return '—';
-  const a = Math.abs(r2(v)), dec = Number.isInteger(a) ? 0 : 2;
+  const a = Math.abs(r2(v)), dec = 2;
   if (!fmtCache[dec]) fmtCache[dec] = new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR', minimumFractionDigits: dec, maximumFractionDigits: 2, useGrouping: 'always' });
   return (v < 0 ? '−' : sign && v > 0 ? '+' : '') + fmtCache[dec].format(a);
 }
@@ -184,18 +184,16 @@ const st = {
 
 /* ---------------- shell ---------------- */
 function shell() {
-  app.innerHTML = `<div class="wrap">
-    <header class="top">
-      <div class="brand"><img src="icons/icon-192.png" alt=""><b>OOQ</b><span>Ledger</span></div>
+  app.innerHTML = `<header class="ribbon"><div class="wrap rib-in">
+      <div class="brand"><img src="icons/icon-192.png" alt=""><b>OOQ Ledger</b></div>
       <nav class="toptabs" aria-label="Secciones">${TABS.map(([k, l]) => `<button data-a="tab" data-v="${k}">${l}</button>`).join('')}</nav>
       <div class="top-r"><button class="syncpill" data-a="settings" id="syncpill"><i></i><span>Local</span></button>
       <button class="iconbtn" data-a="settings" aria-label="Ajustes"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button></div>
-    </header>
-    ${sync.configured() ? '' : '<div class="banner">Modo local: los datos solo están en este dispositivo hasta que se conecte la sincronización.</div>'}
-    <main id="main"></main>
-  </div>
-  <button class="fab" data-a="add" aria-label="Añadir">+</button>
-  <nav class="tabbar" aria-label="Secciones">${TABS.map(([k, l]) => `<button data-a="tab" data-v="${k}"><svg viewBox="0 0 24 24">${ICONS[k]}</svg>${l}</button>`).join('')}</nav>`;
+    </div></header>
+    ${sync.configured() ? '' : '<div class="wrap"><div class="banner">Modo local: los datos solo están en este dispositivo.</div></div>'}
+    <main id="main" class="wrap"></main>
+    <button class="fab" data-a="add" aria-label="Añadir">+</button>
+    <nav class="tabbar" aria-label="Secciones">${TABS.map(([k, l]) => `<button data-a="tab" data-v="${k}">${l}</button>`).join('')}</nav>`;
 }
 function updatePill() {
   const p = $('#syncpill'); if (!p) return;
@@ -221,194 +219,178 @@ function render() {
   main.innerHTML = v();
   updatePill();
 }
-const stat = (l, v, c = '') => `<div class="stat"><div class="eyebrow">${l}</div><div class="v ${c}">${v}</div></div>`;
-const mini = (l, v, c, s) => `<div class="mini"><div class="eyebrow">${l}</div><div class="v ${c}">${v}</div>${s ? `<div class="s">${s}</div>` : ''}</div>`;
-const mnav = () => `<div class="mnav"><button data-a="mprev" aria-label="Mes anterior">‹</button><div class="ml">${monthName(st.month)}</div><button data-a="mnext" aria-label="Mes siguiente">›</button></div>`;
 
-function bezel(p) {
-  const lit = Math.min(60, Math.round(Math.max(0, p) * 60)); let t = '';
-  for (let i = 0; i < 60; i++) {
-    const a = (i * 6 - 90) * Math.PI / 180, mj = i % 5 === 0, r1 = mj ? 43 : 47, r2v = 54;
-    t += `<line class="tk${mj ? ' mj' : ''}${i < lit ? ' on' : ''}" x1="${(60 + r1 * Math.cos(a)).toFixed(2)}" y1="${(60 + r1 * Math.sin(a)).toFixed(2)}" x2="${(60 + r2v * Math.cos(a)).toFixed(2)}" y2="${(60 + r2v * Math.sin(a)).toFixed(2)}"/>`;
-  }
-  const pc = Math.max(0, Math.round(p * 100));
-  return `<svg class="bezel" viewBox="0 0 120 120" role="img" aria-label="${pc}% de la meta">${t}<text class="bz-pct" x="60" y="57">${pc}%</text><text class="bz-lbl" x="60" y="76">META</text></svg>`;
-}
+// spreadsheet building blocks
+const panel = (title, body, right = '') => `<section class="panel"><div class="ph"><span>${title}</span>${right ? `<span class="ph-r">${right}</span>` : ''}</div>${body}</section>`;
+const money = (v, sign) => `<span class="${v < 0 ? 'neg' : sign && v > 0 ? 'pos' : ''}">${eur(v, sign)}</span>`;
+const pbar = (p, cls2 = '') => `<div class="pbar ${cls2}"><i style="width:${Math.min(100, Math.max(0, p * 100))}%"></i></div>`;
+const tr = (label, val, cl = '') => `<tr class="${cl}"><th>${label}</th><td class="n">${val}</td></tr>`;
+const mnav = () => `<div class="mnav"><button data-a="mprev" aria-label="Mes anterior">‹</button><div class="ml">${monthName(st.month)}</div><button data-a="mnext" aria-label="Mes siguiente">›</button></div>`;
+const empty = (t) => `<div class="empty">${t}</div>`;
+const xbtn = (col, id) => { const c = st.confirm === col + '/' + id; return `<button class="del${c ? ' confirm' : ''}" data-a="del" data-col="${col}" data-id="${esc(id)}" aria-label="Borrar">${c ? '¿Borrar?' : '×'}</button>`; };
+
 function spark(mk) {
   const n = daysIn(mk), g = goal(), cm = curMonth();
   const last = mk === cm ? new Date().getDate() : mk < cm ? n : 0;
   const cum = []; let c = 0;
   for (let d = 1; d <= last; d++) { c += parts(mk + '-' + pad(d)).net; cum.push(c); }
-  const W = 320, H = 70, px = 4, py = 6;
+  const W = 320, H = 80, px = 6, py = 8;
   const maxY = Math.max(g, ...cum, 1), minY = Math.min(0, ...cum);
   const x = (d) => px + (d - 1) / (n - 1) * (W - 2 * px), y = (v) => H - py - (v - minY) / (maxY - minY) * (H - 2 * py);
-  let s = `<svg class="spark" viewBox="0 0 ${W} ${H}" role="img" aria-label="Beneficio acumulado frente al ritmo de la meta"><line class="base" x1="${px}" x2="${W - px}" y1="${y(0)}" y2="${y(0)}"/><path class="pace-l" d="M${x(1)} ${y(0)}L${x(n)} ${y(g)}"/>`;
+  let grid = '';
+  for (let i = 1; i <= 3; i++) { const yy = py + (H - 2 * py) * i / 4; grid += `<line class="gl" x1="${px}" x2="${W - px}" y1="${yy}" y2="${yy}"/>`; }
+  let s = `<svg class="spark" viewBox="0 0 ${W} ${H}" role="img" aria-label="Beneficio acumulado del mes frente al ritmo de la meta">${grid}<line class="base" x1="${px}" x2="${W - px}" y1="${y(0)}" y2="${y(0)}"/><path class="pace-l" d="M${x(1)} ${y(0)}L${x(n)} ${y(g)}"/>`;
   if (cum.length) {
     const pts = cum.map((v, i) => x(i + 1).toFixed(1) + ' ' + y(v).toFixed(1));
-    s += `<path class="area" d="M${x(1)} ${y(0)}L${pts.join('L')}L${x(cum.length)} ${y(0)}Z"/><path class="cum" d="M${pts.join('L')}"/><circle class="end" cx="${x(cum.length)}" cy="${y(cum[cum.length - 1])}" r="3.5"/>`;
+    s += `<path class="area" d="M${x(1)} ${y(0)}L${pts.join('L')}L${x(cum.length)} ${y(0)}Z"/><path class="cum" d="M${pts.join('L')}"/><circle class="end" cx="${x(cum.length)}" cy="${y(cum[cum.length - 1])}" r="3"/>`;
   }
-  return s + '</svg>';
+  return s + `</svg><div class="legend"><span><i class="l1"></i>Beneficio acumulado</span><span><i class="l2"></i>Ritmo para ${eur(g)}</span></div>`;
 }
 
-function goalDial(mk) {
+function monthTable(mk) {
   const p = parts(mk), g = goal(), cm = curMonth();
   let pace = '';
   if (mk === cm) {
     const left = daysIn(mk) - new Date().getDate(), rem = g - p.net;
-    pace = rem <= 0 ? '<div class="pace"><b>Meta cumplida.</b> Lo que entre ahora es extra.</div>'
-      : `<div class="pace">Faltan <b>${eur(rem)}</b> → <b>${eur(rem / Math.max(1, left))}/día</b> ${left > 0 ? `los ${left} días que quedan` : 'hoy'}</div>`;
+    pace = rem <= 0 ? tr('Meta', '<span class="pos">cumplida</span>') : tr(`Falta por día (${left} días)`, eur(rem / Math.max(1, left)));
   }
-  return `<section class="card dial"><div><div class="eyebrow">Beneficio · ${MONTHS[pm(mk).m - 1]}</div><div class="big2 ${cls(p.net)}">${eur(p.net, true)}</div><div class="mut" style="font-size:13px">de ${eur(g)} · ${p.nSales} vendidos</div></div>${bezel(p.net / g)}<div style="grid-column:1/-1">${spark(mk)}</div>${pace}</section>`;
+  return `<table class="xl"><tbody>
+    ${tr('Ventas (' + p.nSales + ')', money(p.revenue, true))}
+    ${p.income ? tr('Otros ingresos', money(p.income, true)) : ''}
+    ${tr('Pedidos de stock', money(-p.orders))}
+    ${tr('Gastos negocio', money(-p.biz))}
+    ${tr('Gastos personales', money(-p.pers))}
+    ${tr('Flujo de caja', money(p.flow, true), 'tot')}
+    ${tr('Beneficio', money(p.net, true), 'tot2')}
+    <tr><th>Meta ${eur(g)}</th><td class="n barcell">${pbar(p.net / g)}<span>${Math.max(0, Math.round(p.net / g * 100))}%</span></td></tr>
+    ${pace}
+  </tbody></table>`;
 }
 
 function viewHome() {
-  const cm = curMonth(), p = parts(cm), cash = cashNow(), sp = spendable(), s = S0();
-  const pb = payback();
-  const hero = `<section class="card hero">
-    <div class="hero-top"><div><div class="eyebrow">Caja real</div><div class="big ${cash < 0 ? 'neg' : ''}">${eur(cash)}</div></div><button class="ghost" data-a="settings">Ajustar</button></div>
-    <div class="sub">${sp >= 0 ? `Puedes gastar <b>${eur(sp)}</b>${n0(s.cushion) ? ` sin bajar de tu colchón de ${eur(n0(s.cushion))}` : ''}${pendingBills() ? ` y pagar los ${eur(pendingBills())} de pagos fijos` : ''}.` : `Te faltan <b class="neg">${eur(-sp)}</b> para cubrir ${n0(s.cushion) ? 'colchón y ' : ''}pagos fijos. Nada de gastos extra.`}</div>
-    <div class="flowrow">
-      ${mini('Flujo de caja · ' + MSHORT[pm(cm).m - 1], eur(p.flow, true), cls(p.flow), 'Lo que entra − lo que sale')}
-      ${mini('Beneficio · ' + MSHORT[pm(cm).m - 1], eur(p.net, true), cls(p.net), 'Ventas − coste − gastos negocio')}
-    </div>
-    <div class="breakdown">
-      <div class="kv"><span class="mut">Ventas</span><span class="num pos">${eur(p.revenue, true)}</span></div>
-      ${p.income ? `<div class="kv"><span class="mut">Otros ingresos</span><span class="num pos">${eur(p.income, true)}</span></div>` : ''}
-      <div class="kv"><span class="mut">Pedidos de stock</span><span class="num ${p.orders ? 'neg' : ''}">${p.orders ? '−' + eur(p.orders) : eur(0)}</span></div>
-      <div class="kv"><span class="mut">Gastos negocio</span><span class="num ${p.biz ? 'neg' : ''}">${p.biz ? '−' + eur(p.biz) : eur(0)}</span></div>
-      <div class="kv"><span class="mut">Gastos personales</span><span class="num ${p.pers ? 'neg' : ''}">${p.pers ? '−' + eur(p.pers) : eur(0)}</span></div>
-    </div>
-  </section>`;
-  const open = L('orders').filter((o) => o.status !== 'recibido' || pb[o.id].rev < pb[o.id].cost).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 3);
-  const ordersCard = `<section class="card"><div class="sec-head"><div><div class="eyebrow">Pedidos</div><h2 class="sec">¿Ya los has recuperado?</h2></div><button class="ghost" data-a="goto-orders">Ver todos</button></div>
-    ${open.length ? `<div class="stack">${open.map((o) => orderBody(o, pb[o.id], true)).join('<div style="border-top:1px solid var(--line-soft)"></div>')}</div>` : '<div class="empty">No tienes pedidos sin recuperar. Cuando pagues uno, apúntalo con <b>+ → Pedido</b> y aquí verás cuánto te falta para cubrirlo.</div>'}</section>`;
+  const cm = curMonth(), cash = cashNow(), sp = spendable(), s = S0(), pb = payback(), pend = pendingBills();
+  const caja = panel('Caja', `<table class="xl"><tbody>
+    <tr class="big"><th>Caja real</th><td class="n">${money(cash)}</td></tr>
+    ${tr('Pagos fijos pendientes', money(-pend))}
+    ${n0(s.cushion) ? tr('Colchón', money(-n0(s.cushion))) : ''}
+    ${tr('Puedes gastar', money(sp), 'tot')}
+  </tbody></table>`, '<button class="lnk" data-a="settings">Ajustar</button>');
+  const month = panel(monthName(cm), monthTable(cm));
+  const open = L('orders').filter((o) => o.status !== 'recibido' || pb[o.id].rev < pb[o.id].cost).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 4);
+  const orders = panel('Pedidos sin recuperar', open.length ? `<table class="xl list"><thead><tr><th>Pedido</th><th class="n">Coste</th><th class="n">Recuperado</th></tr></thead><tbody>${open.map((o) => {
+    const r = pb[o.id], p = r.cost ? r.rev / r.cost : 0;
+    return `<tr class="click" data-a="order" data-id="${esc(o.id)}"><td>${shortDate(o.date)} <span class="sub">${r.sold}/${r.units} vendidos</span></td><td class="n">${eur(r.cost)}</td><td class="n barcell">${pbar(p)}<span>${Math.round(p * 100)}%</span></td></tr>`;
+  }).join('')}</tbody></table>` : empty('Nada pendiente. Al apuntar un pedido verás aquí cuánto te falta para recuperarlo.'), '<button class="lnk" data-a="goto-orders">Ver todos</button>');
   const rs = restockList();
-  const restockCard = `<section class="card"><div class="sec-head"><div><div class="eyebrow">Reponer</div><h2 class="sec">${rs.length ? 'Se te acaban' : 'Stock al día'}</h2></div></div>${rs.length ? restockRows(rs) : '<div class="empty">Ningún reloj que se esté vendiendo va a quedarse sin stock en los próximos 10 días.</div>'}</section>`;
+  const restock = panel('Reponer', rs.length ? restockTable(rs) : empty('Ningún reloj que se vende se queda sin stock en 10 días.'));
   const gs = L('goals').slice().sort((a, b) => n0(a.order) - n0(b.order));
-  const goalsCard = gs.length ? `<section class="card"><div class="sec-head"><div><div class="eyebrow">Metas</div><h2 class="sec">Progreso</h2></div><button class="ghost" data-a="tab" data-v="metas">Ver</button></div>${gs.map((g) => {
-    const now = metricValue(g), tg = n0(g.target) || 1;
-    return `<div class="gmini"><div class="kv"><span>${esc(g.title)}</span><span class="num mut">${fmtMetric(g, now)} / ${fmtMetric(g, tg)}</span></div><div class="bar"><i style="width:${Math.min(100, Math.max(0, now / tg * 100))}%"></i></div></div>`;
-  }).join('')}</section>` : '';
-  return `<div class="grid2 wide-l"><div class="stack">${hero}${goalDial(cm)}</div><div class="stack">${ordersCard}${restockCard}${goalsCard}</div></div>`;
+  const goals = gs.length ? panel('Metas', goalsTable(gs, true), '<button class="lnk" data-a="tab" data-v="metas">Ver</button>') : '';
+  return `<div class="cols"><div class="col">${caja}${month}</div><div class="col">${orders}${restock}${goals}</div></div>`;
 }
 function restockList() {
   return L('models').map((m) => ({ m, r: restockInfo(m) })).filter((x) => x.r && x.r.need).sort((a, b) => a.r.cover - b.r.cover);
 }
-function restockRows(rs) {
-  return rs.map(({ m, r }) => `<div class="rs"><div class="tx"><div class="t1">${esc(m.name)}</div>
-    <div class="t2"><b>${r.recent}</b> vendidos en 14 días · ${r.out ? '<span class="neg">agotado</span>' : `te quedan <b>${n0(m.home) + n0(m.transit)}</b> (≈${Math.floor(r.cover)} días)`} · pide <b>${r.sug}</b>${r.cost ? ` ≈ <b>${eur(Math.round(r.cost))}</b>` : ''}</div></div>
-    <button class="btn-g" data-a="restock" data-id="${esc(m.id)}" data-q="${r.sug}">Pedir</button></div>`).join('') +
-    `<div class="hint" style="margin-top:8px">Calculado con el ritmo de ventas de los últimos 14 días para cubrir 30 días.</div>`;
+function restockTable(rs) {
+  return `<table class="xl list"><thead><tr><th>Reloj</th><th class="n">14 días</th><th class="n">Quedan</th><th class="n">Pedir</th></tr></thead><tbody>${rs.map(({ m, r }) => `
+    <tr><td>${esc(m.name)}</td><td class="n">${r.recent}</td><td class="n ${r.out ? 'neg' : ''}">${n0(m.home) + n0(m.transit)}</td>
+    <td class="n"><button class="cellbtn" data-a="restock" data-id="${esc(m.id)}" data-q="${r.sug}">${r.sug} uds</button></td></tr>`).join('')}</tbody></table>
+    <div class="foot">Ritmo de ventas de 14 días, para cubrir 30 días.${rs.some((x) => x.r.cost) ? ` Coste aprox.: ${eur(Math.round(sum(rs.map((x) => x.r.cost || 0))))}.` : ''}</div>`;
 }
-function orderBody(o, pb, compact) {
+function orderBody(o, pb) {
   const cost = pb.cost, rec = pb.rev, pct = cost ? Math.min(1, rec / cost) : 0, gap = cost - rec;
-  const lines = (o.lines || []).map((l) => { const m = model(l.modelId); return `<span>${esc(m ? m.name : l.name || 'Reloj')} <b>×${n0(l.qty)}</b></span>`; }).join('');
-  return `<div class="order">
-    <div class="o-top"><div><div class="o-title">Pedido ${shortDate(o.date)}${o.note ? ' · ' + esc(o.note) : ''}</div><div class="o-sub">${pb.units} relojes · pagado ${eur(n0(o.paid))}${n0(o.dhl) ? ' + DHL ' + eur(n0(o.dhl)) : o.status !== 'recibido' ? ' · DHL al llegar' : ''}</div></div>
-      <span class="pill ${o.status === 'recibido' ? 'ok' : 'camino'}">${o.status === 'recibido' ? 'Recibido' : 'En camino'}</span></div>
-    ${compact ? '' : `<div class="o-lines">${lines}</div>`}
-    <div class="o-nums"><span><span class="big3 ${gap > 0 ? '' : 'pos'}">${eur(rec)}</span> <span class="mut">de ${eur(cost)}</span></span><span class="num mut">${Math.round(pct * 100)}%</span></div>
-    <div class="bar thick"><i style="width:${pct * 100}%"></i></div>
-    <div class="o-foot"><span>${gap > 0 ? `Te faltan <b class="neg num">${eur(gap)}</b> para cubrirlo` : `Cubierto · <b class="pos num">${eur(-gap, true)}</b> limpio`} · vendidos ${pb.sold}/${pb.units}</span>
-      ${pb.potential ? `<span class="mut">Si vendes el resto a precio: <b class="num" style="color:var(--fg)">${eur(rec + pb.potential - cost, true)}</b></span>` : ''}</div>
-    ${compact ? '' : `<div class="o-foot">${o.status !== 'recibido' ? `<button class="btn-g" data-a="receive" data-id="${esc(o.id)}">Ha llegado</button>` : `<span class="mut">Llegó el ${shortDate(o.receivedDate)}</span>`}
-      <button class="del${st.confirm === 'orders/' + o.id ? ' confirm' : ''}" data-a="del" data-col="orders" data-id="${esc(o.id)}" aria-label="Borrar pedido">${st.confirm === 'orders/' + o.id ? '¿Borrar?' : '✕'}</button></div>`}
-  </div>`;
+  return `<table class="xl"><tbody>
+    ${tr('Fecha', shortDate(o.date) + (o.note ? ' · ' + esc(o.note) : ''))}
+    ${tr('Estado', o.status === 'recibido' ? `<span class="pos">Recibido ${shortDate(o.receivedDate)}</span>` : '<span class="warn">En camino</span>')}
+    ${(o.lines || []).map((l) => { const m = model(l.modelId); return tr(esc(m ? m.name : l.name || 'Reloj'), `${n0(l.qty)} × ${eur(n0(l.unit))}`); }).join('')}
+    ${tr('Pagado al pedir', eur(n0(o.paid)))}
+    ${tr('Cobro DHL', o.status === 'recibido' ? eur(n0(o.dhl)) : '<span class="sub">al llegar</span>')}
+    ${tr('Coste total', eur(cost), 'tot')}
+    ${tr('Vendidos', pb.sold + ' de ' + pb.units)}
+    ${tr('Recuperado', money(rec))}
+    <tr><th>Progreso</th><td class="n barcell">${pbar(pct)}<span>${Math.round(pct * 100)}%</span></td></tr>
+    ${tr(gap > 0 ? 'Falta para cubrirlo' : 'Beneficio limpio', gap > 0 ? money(-gap) : money(-gap, true), 'tot2')}
+    ${pb.potential ? tr('Si vendes el resto a precio', money(rec + pb.potential - cost, true)) : ''}
+  </tbody></table>`;
 }
 
 function viewCal() {
   const mk = st.month, p = parts(mk), mode = st.calMode;
-  const stats = mode === 'profit'
-    ? `<div class="stats">${stat('Vendidos', p.nSales + ' uds')}${stat('Ingresos', eur(p.revenue))}${stat('Ticket medio', p.nSales ? eur(p.revenue / p.nSales) : '—')}${stat('Gastos negocio', p.biz ? '−' + eur(p.biz) : eur(0))}</div>`
-    : `<div class="stats">${stat('Entra', eur(p.revenue + p.income, true), 'pos')}${stat('Pedidos', p.orders ? '−' + eur(p.orders) : eur(0), p.orders ? 'neg' : '')}${stat('Gastos', (p.biz + p.pers) ? '−' + eur(p.biz + p.pers) : eur(0), (p.biz + p.pers) ? 'neg' : '')}${stat('Flujo neto', eur(p.flow, true), cls(p.flow))}</div>`;
-  return `<div class="stack"><div class="sec-head" style="margin:0">${mnav()}<div class="seg sm" style="min-width:210px"><button data-a="calmode" data-v="profit" aria-pressed="${mode === 'profit'}">Beneficio</button><button data-a="calmode" data-v="cash" aria-pressed="${mode === 'cash'}">Caja</button></div></div>
-    <div class="grid2 wide-l"><div class="stack">${calGrid(mk)}${stats}</div><div class="stack">${dayPanel()}${mode === 'profit' ? goalDial(mk) : ''}</div></div></div>`;
+  return `<div class="toolbar">${mnav()}<div class="seg sm"><button data-a="calmode" data-v="profit" aria-pressed="${mode === 'profit'}">Beneficio</button><button data-a="calmode" data-v="cash" aria-pressed="${mode === 'cash'}">Caja</button></div></div>
+    <div class="cols wide"><div class="col">${panel(mode === 'profit' ? 'Beneficio por día' : 'Dinero que entra − sale por día', calGrid(mk))}${panel('Total del mes', monthTable(mk))}</div>
+    <div class="col">${dayPanel()}${mode === 'profit' ? panel('Acumulado', spark(mk)) : ''}</div></div>`;
 }
 function dayVal(k) { const p = parts(k); return st.calMode === 'profit' ? p.net : p.flow; }
 function calGrid(mk) {
   const { y, m } = pm(mk), n = daysIn(mk), first = (new Date(y, m - 1, 1).getDay() + 6) % 7, tk = todayKey();
   const vals = []; for (let d = 1; d <= n; d++) vals.push(dayVal(mk + '-' + pad(d)));
-  const maxA = Math.max(1, ...vals.map(Math.abs));
   const cells = []; for (let i = 0; i < first; i++) cells.push(null); for (let d = 1; d <= n; d++) cells.push(d); while (cells.length % 7) cells.push(null);
-  let h = `<section class="card"><div class="wk-head"><div>L</div><div>M</div><div>X</div><div>J</div><div>V</div><div>S</div><div>D</div><div class="wkc">SEM</div></div><div class="grid">`;
+  let h = '<div class="cal"><div class="ch">L</div><div class="ch">M</div><div class="ch">X</div><div class="ch">J</div><div class="ch">V</div><div class="ch">S</div><div class="ch">D</div><div class="ch wkc">Sem.</div>';
   for (let r = 0; r < cells.length; r += 7) {
     let ws = 0;
     for (let c = 0; c < 7; c++) {
       const d = cells[r + c];
       if (!d) { h += '<div class="day blank"></div>'; continue; }
       const k = mk + '-' + pad(d), v = vals[d - 1]; ws += v;
-      const ns = L('sales').filter((s) => s.date === k).length, no = L('orders').filter((o) => o.date === k || o.receivedDate === k).length;
-      const s = v > 0 ? 'pos' : v < 0 ? 'neg' : '';
-      const t = Math.round(14 + 50 * Math.abs(v) / maxA);
-      h += `<button class="day${k === tk ? ' today' : ''}${k > tk ? ' future' : ''}" data-a="day" data-v="${k}" aria-pressed="${k === st.selDay}"${s ? ` data-s="${s}" style="--t:${t}%"` : ''} aria-label="${d} ${MONTHS[m - 1]}: ${v ? eur(v, true) : 'sin movimientos'}">
-        <span class="dn">${d}</span>${ns || no ? `<span class="pips">${'<i class="o"></i>'.repeat(Math.min(no, 1))}${'<i></i>'.repeat(Math.min(ns, 3))}</span>` : ''}<span class="dv">${v ? short(v) : ''}</span></button>`;
+      const no = L('orders').some((o) => o.date === k || o.receivedDate === k);
+      h += `<button class="day${v > 0 ? ' p' : v < 0 ? ' n' : ''}${k === tk ? ' today' : ''}${k > tk ? ' future' : ''}" data-a="day" data-v="${k}" aria-pressed="${k === st.selDay}" aria-label="${d} ${MONTHS[m - 1]}: ${v ? eur(v, true) : 'sin movimientos'}">
+        <span class="dn">${d}${no ? '<i class="od"></i>' : ''}</span><span class="dv">${v ? short(v) : ''}</span></button>`;
     }
-    h += `<div class="wk"><span class="eyebrow">S${r / 7 + 1}</span><span class="num ${cls(ws)}">${ws ? short(ws) : '0'}</span></div>`;
+    h += `<div class="wk"><span class="${cls(ws)}">${ws ? short(ws) : '·'}</span></div>`;
   }
-  return h + `</div><div class="legend"><span><i style="background:var(--fg)"></i>venta</span><span><i style="background:var(--warn)"></i>pedido o DHL</span><span>${st.calMode === 'profit' ? 'Cifra = beneficio del día' : 'Cifra = dinero que entra − sale ese día'}</span></div></section>`;
+  return h + '</div>';
 }
 function dayPanel() {
   const k = st.selDay, d = dateOf(k);
   const title = WD[d.getDay()].replace(/^./, (c) => c.toUpperCase()) + ' ' + d.getDate() + ' de ' + MONTHS[d.getMonth()];
   const rows = dayRows(k), v = dayVal(k);
-  return `<section class="card"><div class="sec-head"><div><div class="eyebrow">${st.calMode === 'profit' ? 'Beneficio del día' : 'Caja del día'}</div><h2 class="sec">${title}</h2></div><div class="num ${cls(v)}" style="font-weight:600;font-size:17px">${rows ? eur(v, true) : ''}</div></div>
-    ${rows ? `<div class="rows">${rows}</div>` : '<div class="empty">Nada este día. Pulsa <b>+</b> para apuntar algo.</div>'}
-    <div style="margin-top:12px"><button class="ghost" data-a="add" data-date="${k}">Añadir a este día</button></div></section>`;
+  return panel(title, (rows ? `<table class="xl list"><tbody>${rows}${tr('Total del día', money(v, true), 'tot')}</tbody></table>` : empty('Nada este día.')) +
+    `<div class="foot"><button class="lnk" data-a="add" data-date="${k}">+ Añadir a este día</button></div>`);
+}
+function line(label, sub, amount, col, id) {
+  return `<tr><td>${label}${sub ? ` <span class="sub">${sub}</span>` : ''}</td><td class="n">${amount}</td><td class="x">${col ? xbtn(col, id) : ''}</td></tr>`;
 }
 function dayRows(k) {
   let h = '';
-  L('sales').filter((s) => s.date === k).forEach((s) => { h += row('s', '€', esc(s.modelName || 'Venta'), esc((s.account ? s.account + ' · ' : '') + 'vendido a ' + eur(n0(s.price)) + ' · coste ' + eur(n0(s.cost))), `<span class="${cls(profitOf(s))}">${eur(st.calMode === 'profit' ? profitOf(s) : n0(s.price), true)}</span>`, 'sales', s.id); });
-  L('orders').filter((o) => o.date === k).forEach((o) => { h += row('o', 'P', 'Pedido de stock', (o.lines || []).reduce((a, l) => a + n0(l.qty), 0) + ' relojes', st.calMode === 'profit' ? '<span class="mut">no resta beneficio</span>' : `<span class="neg">−${eur(n0(o.paid))}</span>`, null, o.id); });
-  L('orders').filter((o) => o.receivedDate === k && n0(o.dhl)).forEach((o) => { h += row('o', 'D', 'Cobro DHL', 'Pedido del ' + shortDate(o.date), st.calMode === 'profit' ? '<span class="mut">va en el coste</span>' : `<span class="neg">−${eur(n0(o.dhl))}</span>`, null, o.id + 'd'); });
-  L('spend').filter((x) => x.date === k).forEach((x) => { const biz = x.kind === 'negocio'; h += row(biz ? 'g' : 'p', biz ? 'N' : 'G', esc(x.cat) + (x.note ? ' · ' + esc(x.note) : ''), biz ? 'Gasto del negocio' : 'Gasto personal', `<span class="${biz || st.calMode === 'cash' ? 'neg' : 'mut'}">−${eur(n0(x.amount))}</span>`, 'spend', x.id); });
-  L('income').filter((x) => x.date === k).forEach((x) => { h += row('i', '+', esc(x.note || 'Ingreso'), 'Otro ingreso', `<span class="pos">${eur(n0(x.amount), true)}</span>`, 'income', x.id); });
+  const prof = st.calMode === 'profit';
+  L('sales').filter((s) => s.date === k).forEach((s) => { h += line(esc(s.modelName || 'Venta'), 'vendido ' + eur(n0(s.price)) + (s.account ? ' · ' + esc(s.account) : ''), money(prof ? profitOf(s) : n0(s.price), true), 'sales', s.id); });
+  L('orders').filter((o) => o.date === k).forEach((o) => { h += line('Pedido de stock', (o.lines || []).reduce((a, l) => a + n0(l.qty), 0) + ' relojes', prof ? '<span class="sub">no resta beneficio</span>' : money(-n0(o.paid)), null, o.id); });
+  L('orders').filter((o) => o.receivedDate === k && n0(o.dhl)).forEach((o) => { h += line('Cobro DHL', 'pedido ' + shortDate(o.date), prof ? '<span class="sub">va en el coste</span>' : money(-n0(o.dhl)), null, o.id + 'd'); });
+  L('spend').filter((x) => x.date === k).forEach((x) => { const biz = x.kind === 'negocio'; h += line(esc(x.cat) + (x.note ? ' · ' + esc(x.note) : ''), biz ? 'negocio' : 'personal', biz || !prof ? money(-n0(x.amount)) : `<span class="sub">${eur(-n0(x.amount))}</span>`, 'spend', x.id); });
+  L('income').filter((x) => x.date === k).forEach((x) => { h += line(esc(x.note || 'Ingreso'), 'ingreso', money(n0(x.amount), true), 'income', x.id); });
   return h;
-}
-function row(ic, icT, t1, t2, amt, col, id) {
-  const key = col + '/' + id, c = st.confirm === key;
-  return `<div class="row"><div class="ic ${ic}">${icT}</div><div class="tx"><div class="t1">${t1}</div><div class="t2">${t2}</div></div><div class="amt">${amt}</div>${col ? `<button class="del${c ? ' confirm' : ''}" data-a="del" data-col="${col}" data-id="${esc(id)}" aria-label="Borrar">${c ? '¿Borrar?' : '✕'}</button>` : '<span style="width:30px;flex:none"></span>'}</div>`;
 }
 
 function viewStock() {
-  const seg = `<div class="seg" style="max-width:340px"><button data-a="seg" data-v="relojes" aria-pressed="${st.stockSeg === 'relojes'}">Relojes</button><button data-a="seg" data-v="pedidos" aria-pressed="${st.stockSeg === 'pedidos'}">Pedidos</button></div>`;
+  const seg = `<div class="seg"><button data-a="seg" data-v="relojes" aria-pressed="${st.stockSeg === 'relojes'}">Relojes</button><button data-a="seg" data-v="pedidos" aria-pressed="${st.stockSeg === 'pedidos'}">Pedidos</button></div>`;
   if (st.stockSeg === 'pedidos') {
     const pb = payback();
     const os = L('orders').slice().sort((a, b) => b.date.localeCompare(a.date));
     const out = sum(os.map((o) => pb[o.id].cost)), back = sum(os.map((o) => Math.min(pb[o.id].rev, pb[o.id].cost)));
-    return `<div class="stack">${seg}<div class="stats">${stat('Invertido en pedidos', eur(out))}${stat('Recuperado', eur(back), 'pos')}${stat('Por recuperar', eur(out - back), out - back > 0 ? 'neg' : '')}${stat('En camino', sum(L('models').map((m) => n0(m.transit))) + ' uds')}</div>
-      <div class="sec-head" style="margin:0"><h2 class="sec">Pedidos</h2><button class="btn-g" data-a="add" data-mode="pedido">+ Pedido</button></div>
-      ${os.length ? `<div class="models">${os.map((o) => `<article class="card">${orderBody(o, pb[o.id], false)}</article>`).join('')}</div>` : '<div class="card empty">Aún no hay pedidos. Apunta el próximo con <b>+ Pedido</b>: resta de la caja al momento y suma los relojes a "en camino".</div>'}</div>`;
+    const sumT = `<table class="xl"><tbody>${tr('Invertido en pedidos', eur(out))}${tr('Recuperado', money(back))}${tr('Por recuperar', money(-(out - back)), 'tot')}${tr('Relojes en camino', sum(L('models').map((m) => n0(m.transit))) + ' uds')}</tbody></table>`;
+    const list = os.length ? `<table class="xl list"><thead><tr><th>Pedido</th><th class="n">Uds</th><th class="n">Coste</th><th class="n">Recuperado</th></tr></thead><tbody>${os.map((o) => {
+      const r = pb[o.id], p = r.cost ? r.rev / r.cost : 0;
+      return `<tr class="click" data-a="order" data-id="${esc(o.id)}"><td>${shortDate(o.date)} <span class="sub ${o.status === 'recibido' ? '' : 'warn'}">${o.status === 'recibido' ? 'recibido' : 'en camino'}</span></td><td class="n">${r.units}</td><td class="n">${eur(r.cost)}</td><td class="n barcell">${pbar(p)}<span>${Math.round(p * 100)}%</span></td></tr>`;
+    }).join('')}</tbody></table><div class="foot">Toca un pedido para ver el detalle o marcar que ha llegado.</div>` : empty('Aún no hay pedidos. Al guardar uno se resta de la caja y los relojes pasan a "en camino".');
+    return `<div class="toolbar">${seg}<button class="btn-g" data-a="add" data-mode="pedido">+ Pedido</button></div><div class="cols"><div class="col">${panel('Resumen', sumT)}</div><div class="col">${panel('Pedidos', list)}</div></div>`;
   }
   const ms = L('models').slice().sort((a, b) => (SORDER[a.status] ?? 9) - (SORDER[b.status] ?? 9) || n0(a.order) - n0(b.order) || String(a.name).localeCompare(b.name));
   const live = ms.filter((m) => m.status !== 'descartado');
-  const home = sum(live.map((m) => n0(m.home))), tr = sum(live.map((m) => n0(m.transit)));
+  const home = sum(live.map((m) => n0(m.home))), trn = sum(live.map((m) => n0(m.transit)));
   const val = sum(live.map((m) => n0(m.home) * costOf(m))), pot = sum(live.map((m) => n0(m.home) * n0(m.listPrice)));
   const f = st.filter, shown = ms.filter((m) => (f === 'todos' ? true : f === 'activos' ? m.status !== 'descartado' : m.status === f));
   const chips = [['activos', 'Activos'], ['ganador', 'Ganadores'], ['test', 'Test'], ['espera', 'En espera'], ['descartado', 'Descartados'], ['todos', 'Todos']]
     .map(([v, l]) => `<button class="chip" data-a="filter" data-v="${v}" aria-pressed="${f === v}">${l}</button>`).join('');
   const rs = restockList();
-  return `<div class="stack">${seg}<div class="stats">${stat('En casa', home + ' uds')}${stat('En camino', tr + ' uds')}${stat('Stock a coste', eur(val))}${stat('Stock a precio', eur(pot))}</div>
-    ${rs.length ? `<section class="card"><div class="sec-head"><div><div class="eyebrow">Reponer</div><h2 class="sec">Se te acaban</h2></div></div>${restockRows(rs)}</section>` : ''}
-    <div class="sec-head" style="margin:0"><div class="chips">${chips}</div><button class="ghost" data-a="model">+ Reloj</button></div>
-    <div class="models">${shown.map(modelCard).join('') || '<div class="card empty">No hay relojes en este filtro.</div>'}</div></div>`;
-}
-function modelCard(m) {
-  const h = n0(m.home), t = n0(m.transit);
-  const sold = L('sales').filter((s) => s.modelId === m.id), sp = sum(sold.map(profitOf));
-  const Lc = costOf(m), est = isEst(m), P = num(m.listPrice), mn = num(m.minPrice), marg = !isNaN(P) ? P - Lc - n0(S0().perSale) : NaN;
-  const sk = STATUS[m.status] ? m.status : 'test', r = restockInfo(m);
-  const id = esc(m.id);
-  return `<article class="card model${m.status === 'descartado' ? ' off' : ''}">
-    <div class="m-top"><div class="m-name">${esc(m.name)}</div><div class="m-pills">${r && r.need ? '<span class="pill reponer">Reponer</span>' : ''}<span class="pill ${sk}">${STATUS[sk]}</span></div></div>
-    <div class="counts">
-      <div class="count"><button class="step" data-a="bump" data-id="${id}" data-f="home" data-d="-1" aria-label="Quitar uno en casa">−</button><div><div class="eyebrow">En casa</div><div class="n">${h}</div></div><button class="step" data-a="bump" data-id="${id}" data-f="home" data-d="1" aria-label="Añadir uno en casa">+</button></div>
-      <div class="count"><button class="step" data-a="bump" data-id="${id}" data-f="transit" data-d="-1" aria-label="Quitar uno en camino">−</button><div><div class="eyebrow">En camino</div><div class="n">${t}</div></div><button class="step" data-a="bump" data-id="${id}" data-f="transit" data-d="1" aria-label="Añadir uno en camino">+</button></div>
-    </div>
-    <div class="m-meta"><span>Coste <b>${est ? '≈' + eur(Lc) : eur(Lc)}</b>${est ? ' <span class="warn">estimado</span>' : ''}</span><span>Precio <b>${isNaN(P) ? '—' : eur(P)}</b></span><span>Mín <b>${isNaN(mn) ? '—' : eur(mn)}</b></span>${isNaN(marg) ? '' : `<span>Margen <b class="pos">${eur(marg, true)}</b></span>`}</div>
-    ${r && r.rate ? `<div class="m-meta"><span>Últimos 14 días <b>${r.recent}</b> vendidos</span><span>Cubre <b>${r.out ? '0' : '≈' + Math.floor(r.cover)}</b> días</span></div>` : ''}
-    <div class="m-foot"><span class="mut">Vendidos <b class="num" style="color:var(--fg)">${sold.length}</b>${sold.length ? ` · <span class="num ${cls(sp)}">${eur(sp, true)}</span>` : ''}</span>
-      <span style="display:flex;gap:6px">${r && r.need ? `<button class="btn-g" data-a="restock" data-id="${id}" data-q="${r.sug}">Pedir ${r.sug}</button>` : ''}<button class="ghost" data-a="model" data-id="${id}">Editar</button></span></div>
-  </article>`;
+  const sumT = `<table class="xl"><tbody>${tr('En casa', home + ' uds')}${tr('En camino', trn + ' uds')}${tr('Stock a coste', eur(val))}${tr('Stock a precio de venta', eur(pot), 'tot')}</tbody></table>`;
+  const table = `<div class="tscroll"><table class="xl list stock"><thead><tr><th>Reloj</th><th class="n">Casa</th><th class="n">Cam.</th><th class="n">Coste</th><th class="n">Precio</th><th class="n">Vend.</th></tr></thead><tbody>${shown.map((m) => {
+    const sold = L('sales').filter((s) => s.modelId === m.id).length, r = restockInfo(m), est = isEst(m);
+    const stt = STATUS[m.status] ? m.status : 'test';
+    return `<tr class="click${m.status === 'descartado' ? ' off' : ''}" data-a="model" data-id="${esc(m.id)}"><td>${esc(m.name)}<span class="sub st-${stt}">${STATUS[stt]}${r && r.need ? ' · <b class="neg">reponer</b>' : ''}</span></td>
+      <td class="n">${n0(m.home)}</td><td class="n">${n0(m.transit) || '·'}</td><td class="n ${est ? 'est' : ''}">${est ? '≈' : ''}${eur(costOf(m)).replace(/\s?€/, '')}</td><td class="n">${isNaN(num(m.listPrice)) ? '·' : eur(num(m.listPrice)).replace(/\s?€/, '')}</td><td class="n">${sold || '·'}</td></tr>`;
+  }).join('') || '<tr><td colspan="6" class="empty">No hay relojes en este filtro.</td></tr>'}</tbody></table></div><div class="foot">Toca un reloj para cambiar stock, coste o precio. ≈ = coste estimado.</div>`;
+  return `<div class="toolbar">${seg}<button class="btn-g" data-a="model">+ Reloj</button></div>
+    <div class="cols wide"><div class="col">${panel('Relojes', `<div class="filters">${chips}</div>` + table)}</div>
+    <div class="col">${panel('Resumen', sumT)}${rs.length ? panel('Reponer', restockTable(rs)) : ''}</div></div>`;
 }
 
 function viewSpend() {
@@ -416,25 +398,20 @@ function viewSpend() {
   const per = on(L('spend'), mk).filter((x) => x.kind !== 'negocio');
   const byCat = {}; per.forEach((x) => { byCat[x.cat] = (byCat[x.cat] || 0) + n0(x.amount); });
   const cats = Object.entries(byCat).sort((a, b) => b[1] - a[1]), mx = Math.max(1, ...cats.map((c) => c[1]));
-  const bars = cats.length ? `<div class="bars">${cats.map(([c, v]) => `<div class="bar-row"><span>${esc(c)}</span><span class="num">${eur(v)}</span><div class="bar"><i style="width:${v / mx * 100}%"></i></div></div>`).join('')}</div>` : `<div class="empty">Sin gastos personales en ${MONTHS[pm(mk).m - 1]}.</div>`;
+  const totals = `<table class="xl"><tbody>${tr('Personal', eur(p.pers))}${tr('Negocio (boosts, envíos…)', eur(p.biz))}${p.income ? tr('Otros ingresos', money(p.income, true)) : ''}${tr('Total gastado', eur(p.pers + p.biz), 'tot')}</tbody></table>
+    ${cats.length ? `<table class="xl list"><thead><tr><th>Categoría</th><th class="n">Importe</th><th class="n">%</th></tr></thead><tbody>${cats.map(([c, v]) => `<tr><td>${esc(c)}</td><td class="n">${eur(v)}</td><td class="n barcell">${pbar(v / mx)}<span>${Math.round(v / (p.pers || 1) * 100)}%</span></td></tr>`).join('')}</tbody></table>` : ''}`;
   const list = [...on(L('spend'), mk).map((x) => ({ ...x, _t: 's' })), ...on(L('income'), mk).map((x) => ({ ...x, _t: 'i' }))].sort((a, b) => b.date.localeCompare(a.date) || (b.at || '').localeCompare(a.at || ''));
-  const rows = list.map((x) => x._t === 'i'
-    ? row('i', '+', esc(x.note || 'Ingreso'), shortDate(x.date) + ' · ingreso', `<span class="pos">${eur(n0(x.amount), true)}</span>`, 'income', x.id)
-    : row(x.kind === 'negocio' ? 'g' : 'p', x.kind === 'negocio' ? 'N' : 'G', esc(x.cat) + (x.note ? ' · ' + esc(x.note) : ''), shortDate(x.date) + ' · ' + (x.kind === 'negocio' ? 'negocio' : 'personal'), '−' + eur(n0(x.amount)), 'spend', x.id)).join('');
-  const spent = `<section class="card"><div class="sec-head"><div><div class="eyebrow">Gastado en ${MONTHS[pm(mk).m - 1]}</div><h2 class="sec num" style="font-size:22px;margin-top:4px">${eur(p.pers + p.biz)}</h2></div><button class="btn-g" data-a="add" data-mode="gasto">+ Gasto</button></div>
-    <div class="kv"><span class="mut">Personal</span><span class="num">${eur(p.pers)}</span></div><div class="kv" style="margin-bottom:12px"><span class="mut">Negocio (boosts, envíos…)</span><span class="num">${eur(p.biz)}</span></div>${bars}
-    ${rows ? `<div class="rows" style="margin-top:14px">${rows}</div>` : ''}</section>`;
+  const moves = list.length ? `<table class="xl list"><thead><tr><th>Concepto</th><th class="n">Importe</th><th></th></tr></thead><tbody>${list.map((x) => x._t === 'i'
+    ? line(esc(x.note || 'Ingreso'), shortDate(x.date) + ' · ingreso', money(n0(x.amount), true), 'income', x.id)
+    : line(esc(x.cat) + (x.note ? ' · ' + esc(x.note) : ''), shortDate(x.date) + ' · ' + (x.kind === 'negocio' ? 'negocio' : 'personal'), money(-n0(x.amount)), 'spend', x.id)).join('')}</tbody></table>` : empty('Sin movimientos este mes.');
   const months = [...new Set(L('bills').map((b) => b.month))].sort().filter((m) => m >= curMonth() || L('bills').some((b) => b.month === m && !b.paid)).slice(0, 5);
-  let bl = '';
-  months.forEach((m) => {
+  const bills = months.length ? `<table class="xl list bills"><tbody>${months.map((m) => {
     const bs = L('bills').filter((b) => b.month === m).sort((a, b) => String(a.concept).localeCompare(b.concept));
-    bl += `<div class="bill-m">${monthName(m)} · ${eur(sum(bs.filter((b) => !b.paid).map((b) => n0(b.amount))))} pendiente</div><div class="rows">${bs.map((b) => {
-      const c = st.confirm === 'bills/' + b.id;
-      return `<div class="row${b.paid ? ' paid' : ''}"><button class="chk" data-a="paid" data-id="${esc(b.id)}" aria-pressed="${!!b.paid}" aria-label="Marcar pagado">${b.paid ? '✓' : ''}</button><div class="tx"><div class="t1">${esc(b.concept)}</div></div><div class="amt">${eur(n0(b.amount))}</div><button class="del${c ? ' confirm' : ''}" data-a="del" data-col="bills" data-id="${esc(b.id)}" aria-label="Borrar">${c ? '¿Borrar?' : '✕'}</button></div>`;
-    }).join('')}</div>`;
-  });
-  const bills = `<section class="card"><div class="sec-head" style="margin-bottom:0"><div><div class="eyebrow">Pagos fijos</div><div class="hint" style="margin-top:4px">Al marcarlo pagado se resta de la caja.</div></div><button class="ghost" data-a="bill">+ Pago</button></div>${bl || '<div class="empty" style="margin-top:10px">Sin pagos fijos pendientes.</div>'}</section>`;
-  return `<div class="stack"><div class="sec-head" style="margin:0">${mnav()}<button class="ghost" data-a="add" data-mode="ingreso">+ Ingreso</button></div><div class="grid2">${spent}${bills}</div></div>`;
+    return `<tr class="grp"><td colspan="2">${monthName(m)}</td><td class="n">${eur(sum(bs.filter((b) => !b.paid).map((b) => n0(b.amount))))}</td><td></td></tr>` + bs.map((b) =>
+      `<tr class="${b.paid ? 'paid' : ''}"><td class="cb"><button class="chk" data-a="paid" data-id="${esc(b.id)}" aria-pressed="${!!b.paid}" aria-label="Marcar pagado">${b.paid ? '✓' : ''}</button></td><td>${esc(b.concept)}</td><td class="n">${eur(n0(b.amount))}</td><td class="x">${xbtn('bills', b.id)}</td></tr>`).join('');
+  }).join('')}</tbody></table><div class="foot">Al marcar un pago se resta de la caja.</div>` : empty('Sin pagos fijos pendientes.');
+  return `<div class="toolbar">${mnav()}<span style="display:flex;gap:6px"><button class="btn-o" data-a="add" data-mode="ingreso">+ Ingreso</button><button class="btn-g" data-a="add" data-mode="gasto">+ Gasto</button></span></div>
+    <div class="cols"><div class="col">${panel('Gastos de ' + MONTHS[pm(mk).m - 1], totals)}${panel('Movimientos', moves)}</div><div class="col">${panel('Pagos fijos', bills, '<button class="lnk" data-a="bill">+ Pago</button>')}</div></div>`;
 }
 
 function fmtMetric(g, v) {
@@ -442,26 +419,26 @@ function fmtMetric(g, v) {
   if (g.metric === 'units') return v + ' uds';
   return eur(v);
 }
+function goalNote(g, now, tg, won) {
+  const money2 = g.metric !== 'streak' && g.metric !== 'units';
+  let note = '';
+  if (g.metric === 'streak') note = `meses con ${eur(n0(g.threshold))} o más, seguidos`;
+  if (g.deadline && !won) {
+    const { y, m } = pm(g.deadline), c = pm(curMonth()), left = (y - c.y) * 12 + (m - c.m) + 1;
+    if (left > 0 && money2) note += (note ? ' · ' : '') + `${eur((tg - now) / left)}/mes hasta ${MSHORT[m - 1]} ${y}`;
+    else if (left <= 0) note += (note ? ' · ' : '') + 'fecha límite pasada';
+  }
+  return won ? 'conseguido' + (note ? ' · ' + note : '') : note;
+}
+function goalsTable(gs, compact) {
+  return `<table class="xl list goals"><thead><tr><th>Meta</th><th class="n">Actual</th><th class="n">Progreso</th>${compact ? '' : '<th></th>'}</tr></thead><tbody>${gs.map((g) => {
+    const now = metricValue(g), tg = n0(g.target) || 1, won = now >= tg, p = Math.min(1, Math.max(0, now / tg)), note = goalNote(g, now, tg, won);
+    return `<tr><td>${esc(g.title)}${note ? `<span class="sub ${won ? 'pos' : ''}">${note}</span>` : ''}</td><td class="n">${fmtMetric(g, now)}<span class="sub">de ${fmtMetric(g, tg)}</span></td><td class="n barcell">${pbar(p, won ? 'won' : '')}<span>${Math.round(p * 100)}%</span></td>${compact ? '' : `<td class="x">${xbtn('goals', g.id)}</td>`}</tr>`;
+  }).join('')}</tbody></table>`;
+}
 function viewGoals() {
   const gs = L('goals').slice().sort((a, b) => n0(a.order) - n0(b.order));
-  const cards = gs.map((g) => {
-    const now = metricValue(g), tg = n0(g.target) || 1, won = now >= tg, p = Math.min(1, Math.max(0, now / tg));
-    const money = g.metric !== 'streak' && g.metric !== 'units';
-    let note = '';
-    if (g.metric === 'streak') note = `Cuenta los meses con <b>${eur(n0(g.threshold))}</b> o más de beneficio, seguidos.`;
-    if (g.metric === 'bestMonth') note = `Tu mejor mes hasta ahora: <b>${eur(now)}</b>.`;
-    if (g.deadline && !won) {
-      const { y, m } = pm(g.deadline), c = pm(curMonth()), left = (y - c.y) * 12 + (m - c.m) + 1;
-      if (left > 0 && money) note += (note ? ' ' : '') + `Faltan <b>${eur(tg - now)}</b> → <b>${eur((tg - now) / left)}/mes</b> durante ${left} ${left === 1 ? 'mes' : 'meses'} (hasta ${monthName(g.deadline)}).`;
-      else if (left <= 0) note += (note ? ' ' : '') + 'La fecha límite ya pasó.';
-    }
-    if (won) note = '<b style="color:var(--accent)">Conseguido.</b> ' + note;
-    const bar = g.metric === 'streak' && tg <= 12 ? `<div class="ticks">${Array.from({ length: tg }, (_, i) => `<i class="${i < now ? 'on' : ''}"></i>`).join('')}</div>` : `<div class="bar thick"><i style="width:${p * 100}%"></i></div>`;
-    const c = st.confirm === 'goals/' + g.id;
-    return `<article class="card goal${won ? ' won' : ''}"><div class="g-top"><div><div class="eyebrow">${esc(METRICS[g.metric] || '')}</div><div class="g-title">${esc(g.title)}</div></div><button class="del${c ? ' confirm' : ''}" data-a="del" data-col="goals" data-id="${esc(g.id)}" aria-label="Borrar meta">${c ? '¿Borrar?' : '✕'}</button></div>
-      <div class="g-prog"><span class="now ${won ? 'pos' : ''}">${fmtMetric(g, now)}</span><span class="mut num">de ${fmtMetric(g, tg)}</span></div>${bar}${note ? `<div class="g-note">${note}</div>` : ''}</article>`;
-  }).join('');
-  return `<div class="stack"><div class="sec-head" style="margin:0"><h2 class="sec">Metas</h2><button class="btn-g" data-a="goal">+ Meta</button></div>${cards ? `<div class="models">${cards}</div>` : '<div class="card empty">Aún no hay metas. Añade la primera con <b>+ Meta</b>.</div>'}</div>`;
+  return `<div class="toolbar"><span class="ttl">Metas</span><button class="btn-g" data-a="goal">+ Meta</button></div>${panel('Progreso', gs.length ? goalsTable(gs, false) : empty('Aún no hay metas.'))}`;
 }
 
 /* ---------------- sheets ---------------- */
@@ -486,6 +463,13 @@ function sheetHTML() {
     const mode = ctx.mode || 'venta';
     const body = { venta: saleBody, pedido: orderForm, gasto: spendBody, ingreso: incomeBody }[mode](ctx);
     return head('AÑADIR') + `<div class="seg">${[['venta', 'Venta'], ['pedido', 'Pedido'], ['gasto', 'Gasto'], ['ingreso', 'Ingreso']].map(([v, l]) => `<button data-a="mode" data-v="${v}" aria-pressed="${mode === v}">${l}</button>`).join('')}</div><div id="sh-body" class="stack">${body}</div>`;
+  }
+  if (kind === 'order') {
+    const o = db.get(C.orders, ctx.id); if (!o) return head('PEDIDO') + empty('Este pedido ya no existe.');
+    const pb = payback()[o.id], c = st.confirm === 'orders/' + o.id;
+    return head('PEDIDO ' + shortDate(o.date).toUpperCase()) + orderBody(o, pb) +
+      (o.status !== 'recibido' ? `<button class="primary" data-a="receive" data-id="${esc(o.id)}">Ha llegado</button>` : '') +
+      `<button class="danger" data-a="del-order">${c ? 'Pulsa otra vez para borrar' : 'Borrar pedido'}</button>`;
   }
   if (kind === 'receive') {
     const o = db.get(C.orders, ctx.id) || {};
@@ -512,6 +496,7 @@ function sheetHTML() {
       <div class="hint">Con un número aproximado basta. Cuando sepas el coste real de un reloj, ponlo en Stock → Editar y se usará ese.</div>
       ${fld('s-acc', 'Cuentas de venta (separadas por comas)', (s.accounts || []).join(', '), 'autocomplete="off"')}
       <div class="err" id="sh-err"></div><button class="primary" data-a="save-settings">Guardar</button>
+      <button class="ghost" data-a="theme" style="justify-self:start">${document.documentElement.dataset.theme === 'dark' ? 'Usar tema claro' : 'Usar tema oscuro'}</button>
       <div class="card" style="padding:14px;display:grid;gap:8px"><div class="eyebrow">Sincronización</div>
         <div style="font-size:14px">${ss.enabled ? (ss.user ? `Conectado como <b>${esc(ss.user)}</b>` : 'Sin sesión') : 'Solo en este dispositivo (sin conectar)'}${ss.enabled && ss.at ? `<div class="hint">Última sincronización ${new Date(ss.at).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}${ss.pending ? ` · ${ss.pending} cambios por subir` : ''}</div>` : ''}${ss.error ? `<div class="hint neg">${esc(ss.error)}</div>` : ''}</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">${ss.enabled ? '<button class="ghost" data-a="sync-now">Sincronizar ahora</button>' : ''}<button class="ghost" data-a="export">Descargar copia</button>${ss.enabled && ss.user ? '<button class="ghost" data-a="logout">Cerrar sesión</button>' : ''}</div></div>`;
@@ -761,7 +746,7 @@ document.addEventListener('click', async (e) => {
   if (e.target === sheetEl) { closeSheet(); return; }
   const b = e.target.closest('[data-a]'); if (!b) return;
   const a = b.dataset.a, v = b.dataset.v;
-  if (a !== 'del' && a !== 'del-model' && st.confirm) { st.confirm = null; renderSoon(); }
+  if (a !== 'del' && a !== 'del-model' && a !== 'del-order' && st.confirm) { st.confirm = null; renderSoon(); }
   if (SAVE[a]) {
     b.disabled = true;
     try { await SAVE[a](); } catch (err) { console.error(err); shErr('No se pudo guardar: ' + (err.message || err)); }
@@ -785,6 +770,14 @@ document.addEventListener('click', async (e) => {
     case 'close': closeSheet(); break;
     case 'model': openSheet('model', { id: b.dataset.id }); break;
     case 'receive': openSheet('receive', { id: b.dataset.id }); break;
+    case 'order': openSheet('order', { id: b.dataset.id }); break;
+    case 'theme': { const t = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = t; lsSet('lg_theme', t); redrawSheet(); break; }
+    case 'del-order': {
+      const id = st.sheet.ctx.id, key = 'orders/' + id;
+      if (st.confirm === key) { st.confirm = null; closeSheet(); await del('orders', id); }
+      else { st.confirm = key; redrawSheet(); }
+      break;
+    }
     case 'settings': openSheet('settings'); break;
     case 'bill': openSheet('bill'); break;
     case 'goal': openSheet('goal'); break;
@@ -862,6 +855,7 @@ function loginView(done) {
 
 /* ---------------- boot ---------------- */
 async function boot() {
+  document.documentElement.dataset.theme = lsGet('lg_theme', 'light');
   await db.init();
   if (sync.configured()) {
     await sync.currentSession().catch(() => null);
