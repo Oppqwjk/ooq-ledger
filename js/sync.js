@@ -147,6 +147,22 @@ export async function syncNow() {
   }
 }
 
+/** Email + password. Creates the account the first time (needs "Confirm email" off in Supabase). */
+export async function passwordLogin(email, password) {
+  await ensureClient();
+  let r = await client.auth.signInWithPassword({ email, password });
+  if (!r.error) { session = r.data.session; remember(email); return session; }
+  if (!/invalid login credentials/i.test(r.error.message)) throw r.error;
+  const up = await client.auth.signUp({ email, password });
+  if (up.error) throw up.error;
+  if (!up.data.session) {
+    throw new Error(up.data.user && up.data.user.identities && up.data.user.identities.length === 0
+      ? 'Contraseña incorrecta.'
+      : 'Supabase pide confirmar el email. Desactiva "Confirm email" en Authentication → Sign In / Providers → Email.');
+  }
+  session = up.data.session; remember(email);
+  return session;
+}
 export async function sendLoginEmail(email) {
   await ensureClient();
   const redirect = location.origin + location.pathname;

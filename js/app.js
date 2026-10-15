@@ -835,35 +835,20 @@ async function seedIfEmpty() {
 
 /* ---------------- login ---------------- */
 function loginView(done) {
-  let email = lsGet('lg-login-email', '');
-  const step1 = () => {
-    app.innerHTML = `<div class="wrap login"><form class="card" novalidate><img src="icons/icon-192.png" alt=""><h1>OOQ LEDGER</h1><p>Entra con tu email. Te llega un código.</p>
-      <div class="field"><label for="lg-email">Email</label><input id="lg-email" type="email" autocomplete="email" inputmode="email" value="${esc(email)}"></div>
-      <div class="err" id="lg-err"></div><button class="primary" type="submit">Enviar código</button>${email ? '<button class="ghost" type="button" id="lg-have" style="justify-self:center">Ya tengo un código</button>' : ''}</form></div>`;
-    $('#lg-have')?.addEventListener('click', step2);
-    $('form', app).addEventListener('submit', async (e) => {
-      e.preventDefault(); email = $('#lg-email').value.trim();
-      if (!/^\S+@\S+\.\S+$/.test(email)) { $('#lg-err').textContent = 'Pon un email válido.'; return; }
-      const btn = $('button[type=submit]', app); btn.disabled = true; btn.textContent = 'Enviando…';
-      try { await sync.sendLoginEmail(email); lsSet('lg-login-email', email); step2(); }
-      catch (ex) { $('#lg-err').textContent = navigator.onLine ? ex.message || 'No se pudo enviar el email.' : 'Sin conexión. Conéctate para entrar la primera vez.'; btn.disabled = false; btn.textContent = 'Enviar código'; }
-    });
-  };
-  const step2 = () => {
-    app.innerHTML = `<div class="wrap login"><form class="card" novalidate><h1>MIRA TU EMAIL</h1><p>Enviado a <b style="color:var(--fg)">${esc(email)}</b>. Escribe el código o pulsa el enlace del email.</p>
-      <div class="field"><label for="lg-code">Código</label><input id="lg-code" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="123456" style="font-family:var(--f-num);font-size:24px;letter-spacing:.2em"></div>
-      <div class="err" id="lg-err"></div><button class="primary" type="submit">Entrar</button><button class="ghost" type="button" id="lg-back" style="justify-self:center">Usar otro email</button></form></div>`;
-    $('#lg-back').addEventListener('click', step1);
-    $('form', app).addEventListener('submit', async (e) => {
-      e.preventDefault(); const code = $('#lg-code').value.replace(/\D/g, '');
-      if (code.length < 6) { $('#lg-err').textContent = 'Escribe el código del email.'; return; }
-      try { await sync.verifyCode(email, code); finish(); } catch (ex) { $('#lg-err').textContent = ex.message || 'Ese código no funciona.'; }
-    });
-  };
-  const poll = setInterval(() => { if (sync.knownUser()) finish(); }, 1000);
-  let finished = false;
-  function finish() { if (finished) return; finished = true; clearInterval(poll); done(); }
-  step1();
+  const email = lsGet('lg-login-email', '');
+  app.innerHTML = `<div class="wrap login"><form class="card" novalidate><img src="icons/icon-192.png" alt=""><h1>OOQ LEDGER</h1><p>Entra una vez en cada dispositivo y se queda guardado. La primera vez crea tu cuenta con la contraseña que pongas.</p>
+    <div class="field"><label for="lg-email">Email</label><input id="lg-email" type="email" autocomplete="username" inputmode="email" value="${esc(email)}"></div>
+    <div class="field"><label for="lg-pass">Contraseña</label><input id="lg-pass" type="password" autocomplete="current-password" minlength="6"></div>
+    <div class="err" id="lg-err"></div><button class="primary" type="submit">Entrar</button></form></div>`;
+  $('form', app).addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const em = $('#lg-email').value.trim(), pw = $('#lg-pass').value, err = $('#lg-err');
+    if (!/^\S+@\S+\.\S+$/.test(em)) { err.textContent = 'Pon un email válido.'; return; }
+    if (pw.length < 6) { err.textContent = 'La contraseña necesita 6 caracteres o más.'; return; }
+    const btn = $('button[type=submit]', app); btn.disabled = true; btn.textContent = 'Entrando…';
+    try { await sync.passwordLogin(em, pw); lsSet('lg-login-email', em); done(); }
+    catch (ex) { err.textContent = navigator.onLine ? (ex.message || 'No se pudo entrar.') : 'Sin conexión. Conéctate para entrar la primera vez.'; btn.disabled = false; btn.textContent = 'Entrar'; }
+  });
 }
 
 /* ---------------- boot ---------------- */
