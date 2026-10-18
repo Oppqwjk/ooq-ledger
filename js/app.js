@@ -72,7 +72,7 @@ const costSrc = (m) => (!m || isNaN(num(m.landed)) ? 'por defecto' : m.landedSrc
 const pouchCost = () => { const s = S0(); return n0(s.pouchCost !== undefined ? s.pouchCost : s.perSale); };
 const pouches = () => n0(S0().pouches);
 async function patchSettings(p) { await db.put(C.settings, { ...(db.get(C.settings, 'settings') || DEF), ...p, id: 'settings' }); }
-const profitOf = (s) => (typeof s.profit === 'number' ? s.profit : n0(s.price) - n0(s.cost));
+const profitOf = (s) => (s.costMissing ? 0 : typeof s.profit === 'number' ? s.profit : n0(s.price) - n0(s.cost)); // no real cost → left out of profit until you fill it in
 const on = (arr, pre, f = 'date') => arr.filter((x) => x[f] && x[f].startsWith(pre));
 
 const payments = (o) => o.payments || [];
@@ -97,7 +97,7 @@ function parts(pre) {
   const p = {
     sales, nSales: sales.length,
     revenue: sum(sales.map((s) => n0(s.price))),
-    profit: sum(sales.map(profitOf)),
+    profit: sum(sales.map(profitOf)), noCost: sales.filter((x) => x.costMissing).length,
     released: sum(L('sales').filter((x) => x.released && !x.cancelled && (x.releasedAt || '').slice(0, 10).startsWith(pre)).map((x) => n0(x.price))),
     withdraw: sum(on(L('transfers'), pre).map((w) => n0(w.amount))),
     biz: sum(spend.filter((x) => x.kind === 'negocio').map((x) => n0(x.amount))),
@@ -194,7 +194,7 @@ function brain() {
   return brainCache;
 }
 const stockOf = (id) => brain().stocks.find((s) => s.m.id === id) || null;
-const agent = createAgent({ db, C, L, model, S0, brain, fresh: () => { brainCache = null; }, costOf, todayKey, nowISO, patchSettings, pouches, pouchCost, cashNow, bankNow, vintedBalance, pendingVinted, owedTotal, spendable, pendingBills, costSrc, landedFromOrder });
+const agent = createAgent({ db, C, L, model, S0, brain, fresh: () => { brainCache = null; }, costOf, todayKey, nowISO, patchSettings, pouches, pouchCost, cashNow, bankNow, vintedBalance, pendingVinted, owedTotal, spendable, pendingBills, costSrc, landedFromOrder, billsDue: () => L('bills').filter((b) => b.month <= curMonth() && !b.paid).map((b) => `${b.month} ${b.concept} ${n0(b.amount)} €`) });
 const SST = { 'en camino': ['En camino', 'mut'], 'no repone': ['No se repone', 'mut'], enfria: ['Se enfría', 'warn'], rotura: ['Sin stock', 'neg'], urgente: ['Urgente', 'neg'], pedir: ['Pedir', 'warn'], ok: ['OK', 'pos'], exceso: ['Exceso', 'warn'], parado: ['Parado', 'warn'], liquidar: ['Liquidar', 'warn'], lento: ['Lento', 'mut'], 'sin datos': ['Sin ventas', 'mut'], fuera: ['Fuera', 'mut'] };
 const days1 = (v) => (v === Infinity || isNaN(v) ? '∞' : v >= 100 ? '99+' : String(Math.floor(v)));
 const rate1 = (v) => (v ? v.toFixed(v < 1 ? 2 : 1).replace('.', ',') : '0');
@@ -910,7 +910,15 @@ function sheetHTML() {
       ${ms.map((m) => { const lv = liveOf(m.id).map((l) => l.account); return `<div class="cu"><b>${esc(m.name)}</b><span class="sub">${STATUS[m.status] || ''}${lv.length ? ' · publicado en ' + esc(lv.join(', ')) : ''}</span>
         <div class="fields3">${fld('cu-h-' + m.id, 'En casa', n0(m.home), 'inputmode="numeric"')}${fld('cu-s-' + m.id, 'Vendidos 14 días', m.baseAt && m.baseAt >= shiftDay(todayKey(), -13) ? n0(m.base14) : '', 'inputmode="numeric" placeholder="0"')}
         <div class="field"><label for="cu-a-${m.id}">Publicado en</label><select id="cu-a-${esc(m.id)}"><option value="">${lv.length ? 'ya apuntado' : 'no / no sé'}</option>${accs.filter((a) => !lv.includes(a)).map((a) => `<option>${esc(a)}</option>`).join('')}</select></div></div></div>`; }).join('')}
+      ${(() => { const arc = sortedModels().filter((m) => m.status === 'descartado' && !/sin especificar/i.test(m.name)); return arc.length ? `<div class="eyebrow">Archivados (ya no los vendes)</div><div class="hint">Si te queda alguno en casa, pon cuántos: sale como "liquidar".</div>${arc.map((m) => `<div class="cu"><b>${esc(m.name)}</b><span class="sub">${L('sales').filter((v) => v.modelId === m.id).length} ventas en total</span><div class="fields3">${fld('cu-h-' + m.id, 'En casa', n0(m.home), 'inputmode="numeric"')}</div></div>`).join('')}` : ''; })()}
       <div class="err" id="sh-err"></div><button class="primary" data-a="save-catchup">Guardar</button>`;
+  }
+  if (kind === 'orphans') {
+    const ms = sortedModels().filter((m) => !/sin especificar/i.test(m.name)), list = salesToFix();
+    return head('VENTAS POR ARREGLAR') + `<div class="hint">Cada venta tiene que ir a un reloj (para el stock) y tener su coste real (para el beneficio). Hasta entonces no cuentan en el beneficio.</div>
+      ${list.length ? list.map((v) => `<div class="cu"><b>${esc(v.modelName || 'Venta')} · ${eur(n0(v.price))}</b><span class="sub">${shortDate(v.date)} · ${esc(v.account || '')}${!model(v.modelId) ? ' · <span class="neg">sin reloj</span>' : ''}${v.costMissing ? ' · <span class="neg">coste FALTA</span>' : ''}</span>
+        <div class="fields2"><div class="field"><label for="of-m-${esc(v.id)}">Reloj</label><select id="of-m-${esc(v.id)}"><option value="">${model(v.modelId) ? esc(model(v.modelId).name) : 'elige…'}</option>${ms.map((m) => `<option value="${esc(m.id)}">${esc(m.name)}</option>`).join('')}</select></div>${fld('of-c-' + v.id, 'Coste del reloj (€)', v.costMissing ? '' : String(n0(v.watchCost !== undefined ? v.watchCost : v.cost)).replace('.', ','), 'inputmode="decimal" placeholder="FALTA"')}</div></div>`).join('') : empty('Todas las ventas tienen reloj y coste.')}
+      <div class="err" id="sh-err"></div>${list.length ? '<button class="primary" data-a="save-orphans">Guardar</button>' : ''}`;
   }
   if (kind === 'test') {
     const t = brain().tests.find((z) => z.m.id === ctx.id);
@@ -1035,14 +1043,16 @@ function allocLanded(lines, pq, pu, ship, dhl, ivaEst) {
   const ws = lines.map((l) => n0(l.w) || n0((model(l.modelId) || {}).weight));
   const byW = lines.length > 0 && ws.every((w) => w > 0);
   const totW = byW ? sum(lines.map((l, i) => l.qty * ws[i])) + pq * POUCH_G : 0;
-  const share = (val, w) => (byW ? ship * w / totW : goods ? ship * val / goods : 0) + (goods ? dhl * val / goods : 0);
+  const wgoods = sum(lines.map((l) => l.qty * l.unit));
+  // without weights the bags (10 g each) get no shipping: by value they'd take ~7% of it and the watches would look cheaper than they are
+  const share = (val, w, bag) => (byW ? ship * w / totW : bag ? 0 : wgoods ? ship * val / wgoods : 0) + (goods ? dhl * val / goods : 0);
   const per = {};
   lines.forEach((l, i) => {
     const val = l.qty * l.unit, tot = (val + share(val, l.qty * ws[i])) * (ivaEst ? 1.21 : 1);
     const k = l.modelId; per[k] = per[k] || { qty: 0, tot: 0 }; per[k].qty += l.qty; per[k].tot += tot;
   });
   for (const k in per) per[k].landed = r2(per[k].tot / per[k].qty);
-  const pouch = pq ? r2((pq * pu + share(pq * pu, pq * POUCH_G)) * (ivaEst ? 1.21 : 1) / pq) : 0;
+  const pouch = pq ? r2((pq * pu + share(pq * pu, pq * POUCH_G, true)) * (ivaEst ? 1.21 : 1) / pq) : 0;
   return { per, pouch, byW, kg: totW / 1000, goods };
 }
 function modelAnalysis(id) {
@@ -1138,8 +1148,8 @@ function afterSheet() {
     };
     const sync_ = () => {
       const m = model(sel.value), c = $('#f-cost', sheetEl);
-      c.value = m ? String(costOf(m)).replace('.', ',') : '';
-      $('#f-esthint', sheetEl).textContent = isEst(m) ? 'Coste estimado (no sabes el exacto de este reloj). Cámbialo si lo sabes.' : '';
+      c.value = m && !isNaN(num(m.landed)) ? String(num(m.landed)).replace('.', ',') : '';
+      $('#f-esthint', sheetEl).textContent = !m || isNaN(num(m.landed)) ? 'Este reloj no tiene coste: pon el real (1688 + envío). Sin coste no se calcula el beneficio.' : m.landedSrc === 'estimado' ? 'Coste estimado del pedido (falta peso o DHL). Cámbialo si sabes el real.' : '';
       $('#f-dec', sheetEl).checked = !!m && n0(m.home) > 0; prev();
     };
     sel.addEventListener('change', sync_);
@@ -1184,7 +1194,7 @@ async function saveSale() {
   if (isNaN(cost) || cost < 0) return shErr('Pon el coste puesto. Sin él no se puede calcular el beneficio.');
   if (!validDate(date)) return shErr('Pon una fecha válida.');
   const dec = $('#f-dec', sheetEl).checked && n0(m.home) > 0;
-  const withPouch = $('#f-pouch', sheetEl).checked, extra = withPouch ? pouchCost() : 0, pouchFromStock = withPouch && pouches() > 0, est = isEst(m) && r2(cost) === r2(n0(S0().defaultCost));
+  const withPouch = $('#f-pouch', sheetEl).checked, extra = withPouch ? pouchCost() : 0, pouchFromStock = withPouch && pouches() > 0, est = m.landedSrc === 'estimado' && r2(cost) === r2(num(m.landed));
   const acc = sv('f-acc');
   const lst = L('listings').filter((l) => l.modelId === m.id && l.account === acc && l.status === 'live').sort((a, b) => a.listedAt.localeCompare(b.listedAt))[0];
   const sale = await db.put(C.sales, { date, at: nowISO(), modelId: m.id, modelName: m.name, price: r2(price), cost: r2(cost + extra), watchCost: r2(cost), extra: r2(extra), estimated: est, profit: r2(price - cost - extra), account: acc, fromStock: dec, pouch: withPouch, pouchFromStock, listingId: lst ? lst.id : null });
@@ -1333,9 +1343,19 @@ async function del(col, id) {
   if (col === 'bills') { const b = db.get(C.bills, id); if (b && b.spendId) await db.remove(C.spend, b.spendId); }
   await db.remove(C[col], id); toast('Borrado');
 }
+const salesToFix = () => L('sales').filter((v) => !v.cancelled && (!model(v.modelId) || v.costMissing || /sin especificar/i.test((model(v.modelId) || {}).name || ''))).sort((a, b) => b.date.localeCompare(a.date));
+async function saveOrphans() {
+  for (const v of salesToFix()) {
+    const mid = sv('of-m-' + v.id), c = num(sv('of-c-' + v.id)), p = {};
+    if (mid && mid !== v.modelId) { const m = model(mid); p.modelId = mid; p.modelName = m ? m.name : v.modelName; }
+    if (!isNaN(c) && c >= 0) { const ex = n0(v.extra); p.watchCost = r2(c); p.cost = r2(c + ex); p.profit = r2(n0(v.price) - c - ex); p.costMissing = false; }
+    if (Object.keys(p).length) await db.patch(C.sales, v.id, p);
+  }
+  closeSheet(); toast('Ventas arregladas');
+}
 async function saveCatchup() {
   const t = todayKey();
-  for (const m of L('models').filter((z) => z.status !== 'descartado')) {
+  for (const m of L('models')) {
     const h = sv('cu-h-' + m.id), sd = sv('cu-s-' + m.id), a = sv('cu-a-' + m.id), p = {};
     if (h !== '' && Math.round(n0(h)) !== n0(m.home)) p.home = Math.max(0, Math.round(n0(h)));
     if (sd !== '') { p.base14 = Math.max(0, Math.round(n0(sd))); p.baseAt = t; }
@@ -1407,21 +1427,21 @@ async function saveWithdraw() {
 async function releaseSale(id) { const x = db.get(C.sales, id); if (x) await db.patch(C.sales, id, { released: true, releasedAt: nowISO() }); }
 function exportForClaude() {
   const snap = agent.snapshot() || {}, bz = brain(), e2 = (v) => (Math.round(v * 100) / 100).toFixed(2);
-  const months = [shiftMonth(curMonth(), -2), shiftMonth(curMonth(), -1), curMonth()].map((mk) => {
+  const months = monthRange().filter((mk) => { const p = parts(mk); return p.nSales || p.biz || p.pers || p.orders || mk === curMonth(); }).map((mk) => {
     const p = parts(mk);
-    return `${mk}: ${p.nSales} ventas · beneficio ventas ${e2(p.profit)} € − gastos negocio ${e2(p.biz)} € = beneficio neto ${e2(p.net)} €` +
+    return `${mk}: ${p.nSales} ventas${p.noCost ? ` (${p.noCost} sin coste, no suman)` : ''} · beneficio ventas ${e2(p.profit)} € − gastos negocio ${e2(p.biz)} € = beneficio neto ${e2(p.net)} €` +
       ` | banco: retirado de Vinted +${e2(p.withdraw)}, otros ingresos +${e2(p.income)}, pedidos −${e2(p.orders)}, gastos negocio −${e2(p.biz)}, gastos personales −${e2(p.pers)} = flujo ${e2(p.flow)} €`;
   });
-  const perModel = L('models').filter((m) => m.status !== 'descartado' || n0(m.home)).map((m) => {
+  const perModel = L('models').filter((m) => m.status !== 'descartado' || n0(m.home) || L('sales').some((v) => v.modelId === m.id)).sort((a, b) => (a.status === 'descartado') - (b.status === 'descartado')).map((m) => {
     const ss = L('sales').filter((v) => v.modelId === m.id && !v.cancelled), d30 = ss.filter((v) => v.date >= shiftDay(todayKey(), -29));
     const r = stockOf(m.id), eff = r ? r.m.status : m.status;
-    return `${m.name} [${eff}${eff !== m.status ? ', marcado ' + m.status : ''}]: ${ss.length} ventas total, ${d30.length} en 30 días, precio medio ${d30.length ? e2(sum(d30.map((v) => n0(v.price))) / d30.length) + ' €' : '-'}, coste ${e2(costOf(m))} € (${costSrc(m)}), 1688 ${n0(m.unitPrice) ? e2(n0(m.unitPrice)) + ' €' : 'FALTA'}, peso ${n0(m.weight) ? n0(m.weight) + ' g' : 'FALTA'}, en casa ${n0(m.home)}, en camino ${n0(m.transit)}`;
+    return `${m.name} [${eff}${eff !== m.status ? ', marcado ' + m.status : ''}]: ${ss.length} ventas total, ${d30.length} en 30 días, precio medio ${ss.length ? e2(sum(ss.map((v) => n0(v.price))) / ss.length) + ' €' : '-'} (30 días: ${d30.length ? e2(sum(d30.map((v) => n0(v.price))) / d30.length) + ' €' : '-'}), coste ${costSrc(m) === 'por defecto' ? 'FALTA' : e2(costOf(m)) + ' € (' + costSrc(m) + ')'}, 1688 ${n0(m.unitPrice) ? e2(n0(m.unitPrice)) + ' €' : 'FALTA'}, peso ${n0(m.weight) ? n0(m.weight) + ' g' : 'FALTA'}, en casa ${n0(m.home)}, en camino ${n0(m.transit)}`;
   });
-  const t = new Date(), fix = [...(S0().migr9log || []), ...(S0().migr10log || [])];
+  const t = new Date(), fix = S0().fixLog || [];
   return `OOQ LEDGER · export ${todayKey()} ${pad(t.getHours())}:${pad(t.getMinutes())}\n` +
     `Datos de mi negocio de relojes. "calculos", "st" (estado de stock) y "pedido_sugerido" los calcula la app. "e" = estado real (ganador solo con 1 venta o 2 ofertas). Dime los mejores movimientos de stock y números.\n\n` +
-    `MESES\n${months.join('\n')}\n\nPOR RELOJ\n${perModel.join('\n')}\n` +
-    (fix.length ? `\nCORRECCIONES DE DATOS\n${fix.join('\n')}\n` : '') +
+    `MESES (todos los meses con datos)\n${months.join('\n')}\n\nPOR RELOJ\n${perModel.join('\n')}\n` +
+    (fix.length ? `\nCORRECCIONES DE DATOS (${S0().fixAt || ''}, estado final)\n${fix.join('\n')}\n` : '') +
     `\nDATOS\n${JSON.stringify(snap)}`;
 }
 async function copyText(txt) {
@@ -1442,7 +1462,7 @@ function exportBackup() {
 }
 
 /* ---------------- events ---------------- */
-const SAVE = { 'save-sale': saveSale, 'save-order': saveOrder, 'save-receive': saveReceive, 'save-spend': saveSpend, 'save-income': saveIncome, 'save-model': saveModel, 'save-settings': saveSettings, 'save-bill': saveBill, 'save-goal': saveGoal,
+const SAVE = { 'save-orphans': saveOrphans, 'save-sale': saveSale, 'save-order': saveOrder, 'save-receive': saveReceive, 'save-spend': saveSpend, 'save-income': saveIncome, 'save-model': saveModel, 'save-settings': saveSettings, 'save-bill': saveBill, 'save-goal': saveGoal,
   'save-snap': saveSnap, 'save-withdraw': saveWithdraw, 'save-catchup': saveCatchup, 'save-newtest': saveNewTest, 'save-listing': saveListing, 'save-acc': saveAcc, 'save-plan': savePlan, 'save-debt': saveDebt };
 function setTab(v) { st.tab = v; lsSet('lg_tab', v); if (location.hash.slice(1) !== v) history.replaceState(null, '', '#' + v); window.scrollTo(0, 0); renderSoon(); }
 document.addEventListener('click', async (e) => {
@@ -1483,6 +1503,7 @@ document.addEventListener('click', async (e) => {
     }
     case 'settings': openSheet('settings'); break;
     case 'import': openSheet('import', {}); break;
+    case 'orphans': openSheet('orphans', {}); break;
     case 'save-import': {
       const btn = b; btn.disabled = true; const res = await runImport(sv('imp-txt'), sv('imp-acc'), sv('imp-pct'));
       btn.disabled = false; if (res.err) { shErr(res.err); break; }
@@ -1784,6 +1805,59 @@ async function migrate10() {
   await patchSettings({ migr: 10, migr10log: log });
 }
 
+// v11 (one time): second review. Sales back on their watch, no made-up costs, one name per account,
+// no "Boost" product, shipping re-split (bags don't eat shipping without weights). The log only says the final state.
+const accKey = (a) => nm(a).replace(/ /g, '');
+async function migrate11() {
+  const cur = db.get(C.settings, 'settings'); if (!cur || n0(cur.migr) >= 11) return;
+  const log = [];
+  // 1) one name per account ("tictacspain" = "tictac spain")
+  const names = cur.accounts || [], meta = cur.accMeta || {}, canon = {};
+  for (const a of names) { const k = accKey(a); if (!canon[k] || (meta[a] && meta[a].main)) canon[k] = a; }
+  const accs = [...new Set(names.map((a) => canon[accKey(a)]))];
+  const fixAcc = (a) => (a && canon[accKey(a)] ? canon[accKey(a)] : a);
+  let nAcc = 0;
+  for (const col of ['sales', 'listings', 'transfers']) for (const x of L(col)) if (x.account && fixAcc(x.account) !== x.account) { await db.patch(C[col], x.id, { account: fixAcc(x.account) }); nAcc++; }
+  const vb = {}; for (const [k, v] of Object.entries(cur.vbal || {})) vb[fixAcc(k)] = r2(n0(vb[fixAcc(k)]) + n0(v));
+  const am = {}; for (const [k, v] of Object.entries(meta)) am[fixAcc(k)] = { ...(am[fixAcc(k)] || {}), ...v };
+  await patchSettings({ accounts: accs, vbal: vb, accMeta: am });
+  if (nAcc) log.push(`cuentas: ${nAcc} registros con el nombre de cuenta unificado (${accs.join(', ')})`);
+  // 2) "Boost" is not a product: its sales become business spend, the model goes
+  for (const m of L('models').filter((z) => /^boost/i.test(nm(z.name)))) {
+    for (const v of L('sales').filter((x) => x.modelId === m.id)) { if (n0(v.price) <= 0) await db.remove(C.sales, v.id); }
+    await db.remove(C.models, m.id); log.push(`"${m.name}" no es un reloj: quitado del stock`);
+  }
+  // 3) sales whose watch no longer exists → back on the right watch by name
+  const ids = new Set(L('models').map((m) => m.id));
+  for (const v of L('sales').filter((x) => !ids.has(x.modelId))) {
+    const k = keyOfItem(v.modelName || ''); let m = k ? await ensureCore(k, true) : null;
+    if (!m) { const n = nm(v.modelName); m = L('models').find((z) => nm(z.name) === n) || L('models').find((z) => n && nm(z.name).split(' ')[0] === n.split(' ')[0]); }
+    if (!m) m = await db.put(C.models, { name: v.modelName || 'Reloj sin especificar', status: 'descartado', home: 0, transit: 0, order: L('models').length + 1 });
+    await db.patch(C.sales, v.id, { modelId: m.id, modelName: m.name });
+    log.push(`venta ${v.date} "${v.modelName}" ${n0(v.price)} € → ${m.name}`);
+  }
+  // 4) no default costs: Poedagar from your history (5 €), the rest "coste FALTA"
+  const def = n0(cur.defaultCost) || 10;
+  for (const v of L('sales')) {
+    const m = model(v.modelId), filler = v.note && /cuadrar/.test(v.note);
+    if (!(filler || (v.estimated && r2(n0(v.watchCost !== undefined ? v.watchCost : v.cost)) === r2(def)))) continue;
+    const hist = L('sales').filter((x) => x.modelId === v.modelId && x.id !== v.id && x.imported).map((x) => n0(x.watchCost !== undefined ? x.watchCost : x.cost));
+    if (hist.length && m && !/sin especificar/i.test(m.name)) {
+      const c = hist.sort((a, b) => a - b)[hist.length >> 1];
+      await db.patch(C.sales, v.id, { cost: r2(c + n0(v.extra)), watchCost: c, profit: r2(n0(v.price) - c - n0(v.extra)), estimated: false, costMissing: false, costFrom: 'historial' });
+      log.push(`${m.name} ${v.date} ${n0(v.price)} €: coste ${c} € (el de tu historial)`);
+    } else { await db.patch(C.sales, v.id, { costMissing: true, profit: null }); log.push(`${m ? m.name : v.modelName} ${v.date} ${n0(v.price)} €: coste FALTA (no cuenta en el beneficio hasta que lo pongas)`); }
+  }
+  // 5) unit cost again from each watch's last order with the new split
+  for (const o of L('orders').filter((x) => !x.draft).sort((a, b) => (a.date + (a.at || '')).localeCompare(b.date + (b.at || '')))) {
+    const al = landedFromOrder(o); if (!al) continue;
+    for (const id in al.per) { const m = model(id), lo = latestOrderOf(id); if (!m || !lo || lo.id !== o.id) continue; const was = num(m.landed); await db.patch(C.models, id, { landed: al.per[id].landed, landedSrc: al.src, landedOrder: o.id }); log.push(`${m.name}: coste ${al.per[id].landed} € (${al.src}${isNaN(was) || Math.abs(was - al.per[id].landed) < 0.005 ? '' : ', antes ' + was})`); }
+  }
+  // final state of the watches you sell
+  for (const k of Object.keys(CORE)) { const m = await ensureCore(k, false); if (m) log.push(`${m.name}: ${m.status}, ${L('sales').filter((v) => v.modelId === m.id).length} ventas, coste ${isNaN(num(m.landed)) ? 'FALTA' : num(m.landed) + ' €'}`); }
+  await patchSettings({ migr: 11, fixLog: log, fixAt: todayKey() });
+}
+
 /* ---------------- login ---------------- */
 function loginView(done) {
   const email = lsGet('lg-login-email', '');
@@ -1818,6 +1892,7 @@ async function boot() {
   await migrate8().catch((e) => console.warn('migrate8', e));
   await migrate9().catch((e) => console.warn('migrate9', e));
   await migrate10().catch((e) => console.warn('migrate10', e));
+  await migrate11().catch((e) => console.warn('migrate11', e));
   shell(); render();
   const ta = $('#comp-text'), fi = $('#comp-file');
   ta.addEventListener('input', () => { ta.style.height = ''; ta.style.height = Math.min(140, ta.scrollHeight) + 'px'; });
