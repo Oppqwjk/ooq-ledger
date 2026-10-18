@@ -580,3 +580,17 @@ body.chatmode { padding-bottom: calc(190px + env(safe-area-inset-bottom, 0px)); 
 .kpi.hero { padding: 14px 16px; }
 /* phone: the day you tapped sits right under the calendar */
 @media (max-width: 899px) { .g2.pnl { display: flex; flex-direction: column; } .g2.pnl > .col { display: contents; } .o1 { order: 1; } .o2 { order: 2; } .o3 { order: 3; } .o4 { order: 4; } .o5 { order: 5; } .o6 { order: 6; } .o7 { order: 7; } .o8 { order: 8; } }
+
+/* simple stock */
+.g2s { display: grid; gap: 14px; }
+@media (min-width: 900px) { .g2s { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 18px; align-items: start; } .s-list { grid-column: 1 / -1; } }
+.todos { display: grid; gap: 8px; padding: 6px 14px 4px; }
+.todo { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; background: var(--head); border-radius: 14px; padding: 10px 12px; }
+.todo > div { display: grid; gap: 2px; min-width: 0; } .todo b { font-size: 15px; } .todo .mut { font-size: 12.5px; }
+.todo.now { box-shadow: inset 0 0 0 2px var(--accent); }
+.slist { display: grid; gap: 6px; padding: 6px 14px 4px; }
+.srow { border: 0; text-align: left; background: var(--head); border-radius: 14px; padding: 10px 12px; display: grid; grid-template-columns: auto minmax(0, 1fr) repeat(4, 76px); gap: 10px; align-items: center; }
+.srow:hover { box-shadow: 0 0 0 2px var(--accent-soft); }
+.sr-n { display: grid; gap: 2px; min-width: 0; } .sr-n b { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .sr-n .mut { font-size: 12px; }
+.sr-k { display: grid; text-align: right; } .sr-k b { font-size: 16px; font-variant-numeric: tabular-nums; } .sr-k span { font-size: 10.5px; color: var(--muted); line-height: 1.2; }
+@media (max-width: 640px) { .srow { grid-template-columns: 46px repeat(4, minmax(0, 1fr)); row-gap: 8px; column-gap: 8px; } .srow > .thumb { grid-row: 1 / 3; align-self: start; } .srow .sr-n { grid-column: 2 / -1; } .sr-k { text-align: left; } .sr-k b { font-size: 15px; } }

@@ -221,7 +221,7 @@ const ICONS = {
 const st = {
   tab: (location.hash.slice(1) && TABS.some((t) => t[0] === location.hash.slice(1))) ? location.hash.slice(1) : TABS.some((t) => t[0] === lsGet('lg_tab', '')) ? lsGet('lg_tab', '') : 'calendario',
   month: curMonth(), selDay: todayKey(), calMode: lsGet('lg_cal', 'profit'), stockSeg: lsGet('lg_seg', 'relojes'), filter: lsGet('lg_filter', 'activos'),
-  confirm: null, sheet: null,
+  confirm: null, sheet: null, stockMore: lsGet('lg_more', '0') === '1',
   chatBusy: false, chatErr: '', chatImgs: [], chatLive: [], aiSetup: false, briefNew: false, aiMovesBusy: false, aiMovesErr: '',
 };
 
@@ -846,10 +846,36 @@ function ordersPanel() {
     return `<tr class="click" data-a="order" data-id="${esc(o.id)}"><td>${shortDate(o.date)} <span class="sub ${o.status === 'recibido' ? '' : 'warn'}">${LANE[o.lane || 'ddp']} · ${o.status === 'recibido' ? 'recibido' : 'llega ~' + shortDate(eta)}${n0(o.owed) ? ` · <b class="neg">debes ${eur(n0(o.owed))}</b>` : ''}</span></td><td class="n">${r.units}</td><td class="n">${eur(r.cost)}</td><td class="n barcell">${pbar(p)}<span>${Math.round(p * 100)}%</span></td></tr>`;
   }).join('')}</tbody></table>` : empty('Aún no hay pedidos.'), '<button class="lnk" data-a="add" data-mode="pedido">+ Pedido</button>');
 }
+// Simple stock: what to order (one line per watch) and your watches ranked by how fast they sell. "Ver más" = the full planner.
+function viewStockSimple() {
+  const pl = plan(), t = todayKey(), pc = pouchCost();
+  const fam = {}; for (const F of pl.fams) fam[F.name] = F;
+  const lines = pl.fams.map((F) => {
+    const o = F.order, when = !o || o.beyond ? null : o.now ? 'hoy' : dShort(o.date);
+    const what = !F.R ? 'aún sin ritmo' : !when ? 'nada, tienes para +90 días' : `pide ${o.qty}${o.split.length > 1 ? ` (${o.split.map((p) => `${p.qty} ${esc(p.m.name.replace(/^watch \d\s*/i, ''))}`).join(', ')})` : ''}`;
+    const gap = F.gap && F.gap.days ? `<span class="warn">sin stock hasta el ${dShort(F.gap.to)}, ya viene</span>` : '';
+    return `<div class="todo${o && o.now ? ' now' : ''}">${thumb(F.members[0] && F.members[0].m, 42)}<div><b>${esc(F.name)}: ${when ? (when === 'hoy' ? '<span class="neg">' + what + ' hoy</span>' : what + ' el ' + when) : what}</b><span class="mut">${o && !o.beyond ? `${eur(o.cost)} · llega ~${dShort(o.arrives)}${o.ok ? '' : ' · <span class="neg">no te llega la caja</span>'}` : ''}${gap ? (o && !o.beyond ? ' · ' : '') + gap : ''}</span></div>${o && o.now ? `<button class="btn-g" data-a="plan-order2" data-v="${esc(F.name)}">Crear pedido</button>` : ''}</div>`;
+  }).join('') || empty('Aún no hay ganadores con ventas.');
+  const rows = L('models').map((m) => ({ m, r: stockOf(m.id) })).filter(({ m, r }) => r && r.m.status !== 'descartado' && (r.m.status === 'ganador' || n0(m.home) || n0(m.transit)))
+    .sort((a, b) => b.r.rate - a.r.rate || n0(b.m.home) - n0(a.m.home));
+  const list = rows.map(({ m, r }) => {
+    const wk = r.rate * 7, left = r.rate > 0 && r.home > 0 ? B.addD(t, Math.floor(r.home / r.rate)) : null, arr = r.arrivals[0];
+    const keep = priceOf(m) - costOf(m) - pc;
+    return `<button class="srow" data-a="model" data-id="${esc(m.id)}">${thumb(m, 46)}<div class="sr-n"><b>${esc(m.name)}</b><span class="mut">${r.m.status === 'ganador' ? 'ganador' : 'en test'}${isEst(m) || costSrc(m) === 'por defecto' ? '' : ` · deja ~${eur(keep)}/venta`}</span></div>
+      <div class="sr-k"><b>${wk ? wk.toFixed(1).replace('.', ',') : '–'}</b><span>a la semana</span></div>
+      <div class="sr-k"><b>${r.home}</b><span>en casa</span></div>
+      <div class="sr-k"><b>${r.transit || '–'}</b><span>${arr ? 'llegan ' + dShort(arr.eta) : 'en camino'}</span></div>
+      <div class="sr-k"><b>${left ? dShort(left) : '–'}</b><span>${left ? 'te dura hasta' : r.home ? 'sin ritmo' : 'agotado'}</span></div></button>`;
+  }).join('');
+  return `<div class="toolbar"><div class="ttl">Stock</div><div class="tb-r"><button class="btn-o" data-a="catchup">Contar stock</button><button class="btn-o" data-a="add" data-mode="pedido">+ Pedido</button><button class="ghost" data-a="stock-more">Ver más</button></div></div>
+    <div class="g2s"><div class="s-todo">${panel('Qué pedir', `<div class="todos">${lines}</div><div class="foot">Pide cuando te queden ~2 semanas: un pedido tarda ${pl.lead} días. Si ya viene uno en camino, no te dice que pidas.</div>`)}</div><div class="s-ord">${ordersPanel()}</div><div class="s-list">
+    ${panel('Más rápidos primero', `<div class="slist">${list || empty('Nada en stock.')}</div><div class="foot">"A la semana" cuenta solo los días que lo tenías en casa.</div>`, '<button class="lnk" data-a="model">+ Reloj</button>')}</div></div>`;
+}
 function viewStock2() {
+  if (!st.stockMore) return viewStockSimple();
   const pl = plan();
   const sumHome = sum(L('models').map((m) => n0(m.home))), sumTr = sum(L('models').map((m) => n0(m.transit))), val = sum(L('models').filter((m) => m.status !== 'descartado').map((m) => n0(m.home) * costOf(m)));
-  return `<div class="toolbar"><div class="ttl">Stock y caja</div><div class="tb-r"><span class="mut sm2">${sumHome} en casa · ${sumTr} en camino · ${eur(val)} en stock · bolsitas ${pouches()}</span><button class="btn-o" data-a="catchup">Contar stock</button><button class="btn-g" data-a="add" data-mode="pedido">+ Pedido</button></div></div>
+  return `<div class="toolbar"><div class="ttl">Stock y caja</div><div class="tb-r"><button class="ghost" data-a="stock-more">Ver menos</button><span class="mut sm2">${sumHome} en casa · ${sumTr} en camino · ${eur(val)} en stock · bolsitas ${pouches()}</span><button class="btn-o" data-a="catchup">Contar stock</button><button class="btn-g" data-a="add" data-mode="pedido">+ Pedido</button></div></div>
     ${nextOrderCard(pl)}${famCards(pl)}
     <div class="g2"><div class="col">${panel('Stock y dinero · próximos 60 días', timelineChart(pl), `pedido tarda ${pl.lead} d`)}${modelCards()}</div><div class="col">${cashPanel(pl)}${ordersPanel()}</div></div>`;
 }
@@ -1754,6 +1780,7 @@ document.addEventListener('click', async (e) => {
     }
     case 'settings': openSheet('settings'); break;
     case 'import': openSheet('import', {}); break;
+    case 'stock-more': st.stockMore = !st.stockMore; lsSet('lg_more', st.stockMore ? '1' : '0'); renderSoon(); break;
     case 'photo-rm': st.sheet.ctx.photo = null; redrawSheet(); break;
     case 'orphans': openSheet('orphans', {}); break;
     case 'save-import': {
