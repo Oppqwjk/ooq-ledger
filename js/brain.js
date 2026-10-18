@@ -33,9 +33,15 @@ export const STAGE = { espera: 'Esperando', datos: 'Faltan datos', portada: 'Cam
 /* ---------------- demand ---------------- */
 // Weighted sales per day over the last 28 days. Recent days weigh more (half-life 7 days),
 // so a model that is heating up or cooling down shows it within days, not weeks.
-export function demand(mid, sales, today) {
-  const mine = sales.filter((s) => s.modelId === mid && s.date && s.date <= today);
-  const base = { rate: 0, last7: 0, prev7: 0, last14: 0, total: mine.length, sd: 0, lastSale: null, first: null, trend: 0 };
+// Sales you told the app about without logging each one ("Ponerme al día"): spread over the 14 days before you said it.
+function baseSales(m, today) {
+  const n = Math.round(n0(m && m.base14)), at = m && m.baseAt;
+  if (!n || !at || diffD(at, today) > 27) return [];
+  return Array.from({ length: n }, (_, k) => ({ modelId: m.id, date: addD(at, -1 - Math.floor(k * 14 / n)), virtual: true }));
+}
+export function demand(mid, sales, today, m) {
+  const mine = sales.filter((s) => s.modelId === mid && s.date && s.date <= today).concat(baseSales(m, today));
+  const base = { rate: 0, last7: 0, prev7: 0, last14: 0, total: mine.length, n28: 0, sd: 0, lastSale: null, first: null, trend: 0 };
   if (!mine.length) return base;
   const dates = mine.map((s) => s.date).sort();
   const first = dates[0], lastSale = dates[dates.length - 1];
@@ -49,7 +55,8 @@ export function demand(mid, sales, today) {
   const sd = Math.sqrt(sum(arr.map((c) => (c - mean) ** 2)) / arr.length);
   const inR = (a, b) => mine.filter((s) => s.date >= addD(today, a) && s.date <= addD(today, b)).length;
   const last7 = inR(-6, 0), prev7 = inR(-13, -7);
-  return { rate, last7, prev7, last14: last7 + prev7, total: mine.length, sd, lastSale, first, trend: prev7 ? last7 / prev7 - 1 : last7 ? 1 : 0 };
+  const n28 = mine.filter((s) => s.date >= from).length;
+  return { rate, last7, prev7, last14: last7 + prev7, total: mine.length, n28, sd, lastSale, first, trend: prev7 ? last7 / prev7 - 1 : last7 ? 1 : 0 };
 }
 
 /* ---------------- lead times ---------------- */
@@ -90,6 +97,12 @@ export function stockFor(m, d, x) {
     qty: 0, bridge: 0, ddpQty: 0, gap: 0, outDate: null, status: 'sin datos', why: '' };
   if (m.status === 'descartado') { r.status = home > 0 ? 'liquidar' : 'fuera'; r.why = home > 0 ? `${home} uds de un reloj descartado: véndelas a precio de salida` : ''; return r; }
   const idle = d.lastSale ? diffD(d.lastSale, today) : null;
+  // too few sales to trust a rate: no order advice, just say so (a winner at 0 stock still gets a small DDP)
+  if (d.n28 < 4) {
+    if (home === 0 && m.status === 'ganador' && !transit) { r.status = 'rotura'; r.ddpQty = 10; r.qty = 10; r.why = `0 en casa · solo ${d.n28} venta${d.n28 === 1 ? '' : 's'} apuntada${d.n28 === 1 ? '' : 's'} en 28 días → DDP de 10 y apunta las ventas`; return r; }
+    if (home > 0 && d.total > 0 && idle >= 14) { r.status = 'parado'; r.why = `${home} uds, ${idle} días sin vender · ${Math.round(home * cost)} € parados`; return r; }
+    r.status = d.total ? 'lento' : 'sin datos'; r.why = `solo ${d.n28} venta${d.n28 === 1 ? '' : 's'} apuntada${d.n28 === 1 ? '' : 's'} en 28 días: no basta para calcular`; return r;
+  }
   if (rate <= 0.02) {
     if (home > 0 && d.total > 0 && idle >= 14) { r.status = 'parado'; r.why = `${home} uds, ${idle} días sin vender · ${Math.round(home * cost)} € parados`; }
     else r.status = d.total ? 'lento' : 'sin datos';
@@ -102,11 +115,12 @@ export function stockFor(m, d, x) {
   const next = arrivals[0];
   if (next && next.eta > r.outDate) r.gap = diffD(r.outDate, next.eta);
   // a new DDP order lands in L days; anything that runs out before that has to be bridged with DHL
-  const short = L - Math.max(r.coverAll, Ld);
-  if (r.coverAll < L && short > 0) r.bridge = Math.max(5, ceil5(rate * short + r.safety));
+  // DHL only for real sellers (2+ a week) that would actually run dry before a DDP lands; a slow watch just waits for DDP
+  const fast = rate >= 0.3, short = L - Math.max(r.coverAll, Ld);
+  if (fast && r.coverAll < L - 3 && short > 0) r.bridge = Math.max(5, ceil5(rate * short + r.safety));
   // home runs out before the box on the way lands: a DHL box can fill that hole only if it lands first
   r.dhlInTime = !next || addD(today, Ld) < next.eta;
-  if (r.gap > 0 && next && r.dhlInTime) {
+  if (fast && r.gap > 3 && next && r.dhlInTime) {
     const from = addD(today, Ld) > r.outDate ? addD(today, Ld) : r.outDate;
     r.bridge = Math.max(r.bridge, Math.max(5, ceil5(rate * diffD(from, next.eta))));
   }
@@ -115,7 +129,8 @@ export function stockFor(m, d, x) {
   r.qty = r.bridge + r.ddpQty;
   if (home === 0) { r.status = 'rotura'; r.why = transit ? `0 en casa · llegan ${transit} el ${fd(next ? next.eta : '')}${r.bridge ? ` → DHL ${r.bridge} uds tapa el hueco` : ''}` : `0 en casa y nada en camino · pierdes ~${(rate * 7).toFixed(1)} ventas/semana`; }
   else if (r.gap > 0) { r.status = 'urgente'; r.why = `se acaba el ${fd(r.outDate)}, el pedido llega el ${fd(next.eta)} → ${r.gap} días sin stock` + (r.bridge ? ` → DHL ${r.bridge} uds ya` : ' → DHL tampoco llega antes: no aceptes ofertas bajas, vende a precio completo'); }
-  else if (r.coverAll < L) { r.status = 'urgente'; r.why = `${Math.floor(r.coverAll)} días de stock y un DDP tarda ${L}`; }
+  else if (r.coverAll < L && r.bridge) { r.status = 'urgente'; r.why = `${Math.floor(r.coverAll)} días de stock y un DDP tarda ${L} → DHL ${r.bridge} para no parar`; }
+  else if (r.coverAll < L) { r.status = 'pedir'; r.why = `${Math.floor(r.coverAll)} días de stock, vende ${rate < 0.15 ? '1 cada ' + Math.round(1 / rate) + ' días' : rate.toFixed(1).replace('.', ',') + '/día'} → DDP hoy y llega a tiempo de sobra`; }
   else if (stock <= r.rop) { r.status = 'pedir'; r.why = `${Math.floor(r.coverAll)} días de stock → pide ya para no quedarte sin`; }
   else if (r.coverAll > 60) { r.status = 'exceso'; r.why = `${Math.floor(r.coverAll)} días de stock · dinero parado`; }
   else r.status = 'ok';
@@ -258,7 +273,7 @@ export function distribution(x, acc, stocks) {
       const pick = allowed.filter((a) => !liveAcc.includes(a.name))
         .map((a) => ({ a, sold: sales.filter((v) => v.modelId === m.id && v.account === a.name).length }))
         .sort((p, q) => q.sold - p.sold || p.a.live.length - q.a.live.length)[0];
-      if (pick) out.push({ k: 'publicar', m, acc: pick.a.name, why: liveAcc.length ? `${st.home} en casa, solo en ${liveAcc.length} cuenta` : `${st.home} en casa y 0 anuncios activos`, p: liveAcc.length ? 70 : 84, home: st.home });
+      if (pick) out.push({ k: 'publicar', m, acc: pick.a.name, why: liveAcc.length ? `${st.home} en casa, solo en ${liveAcc.length} cuenta` : `${st.home} en casa y ningún anuncio apuntado (si ya está subido, apúntalo)`, p: liveAcc.length ? 70 : 84, home: st.home });
     }
     if (liveAcc.length > maxAcc) out.push({ k: 'quitar', m, acc: liveAcc[liveAcc.length - 1], why: `en ${liveAcc.length} cuentas a la vez (máx. ${maxAcc}) → más reportes`, p: 66 });
   }
@@ -309,7 +324,7 @@ export function analyze(input) {
   x.lead = leadTimes(orders, settings);
   x.bench = benchmarks(listings, models);
   const live = models.filter((m) => m.status !== 'descartado' || n0(m.home) > 0);
-  const stocks = live.map((m) => stockFor(m, demand(m.id, sales, today), x));
+  const stocks = live.map((m) => stockFor(m, demand(m.id, sales, today, m), x));
   const tests = models.filter((m) => m.status === 'test').map((m) => testFor(m, x));
   const acc = accountsFor(x);
   const dist = distribution(x, acc, stocks);
@@ -320,6 +335,9 @@ export function analyze(input) {
   const benchN = n0(settings.testBench) || FALLBACK.bench;
   const moves = [];
   const add = (p, tag, title, why, act) => moves.push({ p, tag, title, why, act });
+  const logged14 = sales.filter((v) => v.date >= addD(today, -13)).length;
+  const based = models.some((m) => m.baseAt && diffD(m.baseAt, today) <= 27);
+  if (logged14 < 10 && !based) add(99, 'Datos', `Solo veo ${logged14} venta${logged14 === 1 ? '' : 's'} en 14 días`, 'si vendes más, ponme al día (2 min) o todo lo que te digo sale de casi nada', { a: 'catchup' });
   if (owed > 0) add(95, 'Deuda', `Paga ${Math.round(owed)} € que debes`, 'deuda primero: nada nuevo se compra hasta pagarla', { a: 'goto-orders' });
   for (const s of stocks) {
     if (s.status === 'rotura' && !s.transit) add(94, 'Stock', `${s.m.name}: sin stock`, s.why, { a: 'goto-plan' });
@@ -333,7 +351,8 @@ export function analyze(input) {
     if (P) add(P, 'Test', `${t.m.name}: ${STAGE[t.stage]}`, `${t.why} → ${t.act}`, { a: 'test', id: t.m.id });
   }
   const running = tests.filter((t) => t.ls.length && !['ganador', 'muerto'].includes(t.stage)).length;
-  if (running < benchN) add(68, 'Test', `Sube ${benchN - running} test${benchN - running > 1 ? 's' : ''} nuevo${benchN - running > 1 ? 's' : ''}`, `${running} de ${benchN} tests corriendo → sin tests no hay ganadores nuevos`, { a: 'tab', v: 'tests' });
+  const waiting = tests.filter((t) => !t.ls.length && t.home > 0).length, findN = benchN - running - waiting;
+  if (findN > 0) add(68, 'Test', `Busca ${findN} test${findN > 1 ? 's' : ''} nuevo${findN > 1 ? 's' : ''} en 1688`, `${running} corriendo${waiting ? ` + ${waiting} en casa sin publicar` : ''} de ${benchN} → sin tests no hay ganadores nuevos`, { a: 'tab', v: 'tests' });
   for (const d of dist) add(d.p, 'Cuentas', `${d.k === 'publicar' ? 'Publica' : d.k === 'mover' ? 'Mueve' : 'Quita'} ${d.m.name} ${d.k === 'publicar' ? 'en' : 'de'} ${d.acc}`, d.why, { a: 'tab', v: 'cuentas' });
   for (const z of stale) add(62, 'Anuncio', `Renueva ${z.m.name} en ${z.l.account}`, `${z.days} días sin vender ese anuncio → portada nueva y vuelve a subirlo`, { a: 'listing', id: z.l.id });
   if (pace.T && pace.ok === false) add(60, 'Ritmo', `Necesitas ${pace.need.toFixed(1)} ventas/día`, `vas a ${pace.paceDay.toFixed(1)}/día → acabas en ~${pace.proj} de ${pace.T}`, { a: 'tab', v: 'metas' });

@@ -48,12 +48,13 @@ export function createAgent(api) {
     { name: 'cambiar_precio', description: 'Cambia el precio de los anuncios activos de un reloj (y su precio de venta).', input_schema: { type: 'object', properties: { reloj: { type: 'string' }, precio: { type: 'number' }, cuenta: { type: 'string' } }, required: ['reloj', 'precio'] } },
     { name: 'quitar_anuncio', description: 'Marca anuncios activos de un reloj como retirados por Vinted (reporte) o quitados por el usuario.', input_schema: { type: 'object', properties: { reloj: { type: 'string' }, cuenta: { type: 'string' }, por_vinted: { type: 'boolean' }, motivo: { type: 'string' } }, required: ['reloj', 'por_vinted'] } },
     { name: 'registrar_gasto', description: 'Apunta un gasto (no pedidos de stock).', input_schema: { type: 'object', properties: { importe: { type: 'number' }, tipo: { type: 'string', enum: ['personal', 'negocio'] }, categoria: { type: 'string' }, nota: { type: 'string' } }, required: ['importe', 'tipo'] } },
+    { name: 'ponerme_al_dia', description: 'Cuando el usuario dice cuántos vendió de un reloj en los últimos 14 días sin haberlos apuntado uno a uno (solo para el ritmo de ventas, no entra en caja), y/o cuántos tiene en casa.', input_schema: { type: 'object', properties: { reloj: { type: 'string' }, vendidos_14d: { type: 'number' }, en_casa: { type: 'number' } }, required: ['reloj'] } },
     { name: 'pagar_deuda', description: 'Paga parte o toda la deuda de pedidos (empieza por el pedido más antiguo).', input_schema: { type: 'object', properties: { importe: { type: 'number' } }, required: ['importe'] } },
   ];
 
   async function run(name, x) {
     const s = S0();
-    if (['registrar_venta', 'registrar_anuncio', 'registrar_stats', 'cambiar_estado_reloj', 'ajustar_stock', 'cambiar_precio', 'quitar_anuncio'].includes(name)) {
+    if (['registrar_venta', 'registrar_anuncio', 'registrar_stats', 'cambiar_estado_reloj', 'ajustar_stock', 'cambiar_precio', 'quitar_anuncio', 'ponerme_al_dia'].includes(name)) {
       const f = findModel(x.reloj); if (f.err) return { error: f.err };
       const m = f.m;
       if (name === 'registrar_venta') {
@@ -84,6 +85,11 @@ export function createAgent(api) {
         fresh();
         const t = brain().tests.find((z) => z.m.id === m.id);
         return { ok: `Stats guardadas: ${m.name} (${l.account}) ${Math.round(n0(x.vistas))} vistas, ${Math.round(n0(x.favoritos))} favs, ${Math.round(n0(x.ofertas))} ofertas.` + (t ? ` Veredicto del test: ${t.stage} · ${t.why} → ${t.act}` : '') };
+      }
+      if (name === 'ponerme_al_dia') {
+        const p = {}; if (x.vendidos_14d !== undefined) { p.base14 = Math.max(0, Math.round(n0(x.vendidos_14d))); p.baseAt = todayKey(); } if (x.en_casa !== undefined) p.home = Math.max(0, Math.round(n0(x.en_casa)));
+        await db.patch(C.models, m.id, p); fresh(); const st = brain().stocks.find((z) => z.m.id === m.id);
+        return { ok: `${m.name} al día${p.base14 !== undefined ? `: ${p.base14} vendidos en 14 días` : ''}${p.home !== undefined ? `, ${p.home} en casa` : ''}.` + (st ? ` Ahora: ${st.rate.toFixed(2)}/día, estado ${st.status}${st.why ? ' · ' + st.why : ''}.` : '') };
       }
       if (name === 'cambiar_estado_reloj') { await db.patch(C.models, m.id, { status: x.estado }); fresh(); return { ok: `${m.name} → ${x.estado}.` }; }
       if (name === 'ajustar_stock') {
@@ -159,7 +165,7 @@ Cómo hablas:
 - Nunca inventas datos. Si falta algo, lo pides en una frase. Si está equivocado, se lo dices con el número que lo demuestra.
 
 Qué haces:
-- Ves todos sus datos en DATOS (se actualizan en cada mensaje). Los cálculos de stock, tests, cuentas y movimientos ya están hechos ahí: úsalos y explícalos.
+- Ves todos sus datos en DATOS (se actualizan en cada mensaje). Si ves pocas ventas apuntadas, pregúntale cuántas ha vendido de cada reloj en 14 días y usa ponerme_al_dia antes de dar consejos de stock. Los cálculos de stock, tests, cuentas y movimientos ya están hechos ahí: úsalos y explícalos.
 - Cuando te cuente algo que ha pasado (venta, anuncio subido, stats, gasto, pago, retirada, cambio de stock) LO APUNTAS con las herramientas, sin pedir permiso, y confirmas con los totales nuevos. Si es ambiguo (qué reloj, qué cuenta, qué precio) preguntas antes.
 - Capturas de Vinted: lees vistas, favoritos, ofertas y la mejor oferta y llamas a registrar_stats. Si no se leen bien, lo dices.
 - Tests rápidos: control a las 24h, 48h, 72h y 96h. 1 venta = ganador. 2+ ofertas en 48h, o favs de ganador + 1 oferta = ganador. Favs a la mitad de un ganador y 0 ofertas a las 48h = muerto. 72h sin venta = baja 5 € y oferta a los favs. 96h sin venta = muerto. Oferta que deja buen beneficio = aceptarla.

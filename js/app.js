@@ -318,7 +318,7 @@ function paceBlock() {
     ${tr('Beneficio', money(p.P, true) + (p.PT ? `<span class="sub">de ${eur(p.PT)}</span>` : ''))}
   </tbody></table>`, '<button class="lnk" data-a="tab" data-v="metas">Plan</button>');
 }
-const TAGC = { Deuda: 'neg', Stock: 'acc', Test: 'warn', Cuentas: 'blu', Anuncio: 'blu', Ritmo: 'mut' };
+const TAGC = { Datos: 'neg', Deuda: 'neg', Stock: 'acc', Test: 'warn', Cuentas: 'blu', Anuncio: 'blu', Ritmo: 'mut' };
 function moveAttrs(act) { return `data-a="${act.a}"${act.id ? ` data-id="${esc(act.id)}"` : ''}${act.v ? ` data-v="${esc(act.v)}"` : ''}`; }
 function movesTable(ms, from = 0) {
   if (!ms.length) return empty('Nada urgente. Sube tests y mantén los ganadores publicados.');
@@ -458,7 +458,7 @@ function viewStock() {
   }).join('') || '<tr><td colspan="6" class="empty">No hay relojes en este filtro.</td></tr>'}</tbody></table></div><div class="foot">/día = ventas por día (las recientes pesan más). Días = días de stock contando lo que viene en camino. Toca un reloj para ver todo su análisis.</div>`;
   const alerts = bz.stocks.filter((r) => ['rotura', 'urgente', 'pedir', 'parado', 'liquidar', 'exceso'].includes(r.status)).sort((a, b) => ({ rotura: 0, urgente: 1, pedir: 2, parado: 3, liquidar: 4, exceso: 5 }[a.status] - { rotura: 0, urgente: 1, pedir: 2, parado: 3, liquidar: 4, exceso: 5 }[b.status]));
   const al = alerts.length ? `<table class="xl list"><tbody>${alerts.map((r) => `<tr class="click" data-a="model" data-id="${esc(r.m.id)}"><td>${esc(r.m.name)}<span class="sub">${stockBadge(r)} · ${esc(r.why)}</span></td></tr>`).join('')}</tbody></table><div class="foot"><button class="lnk" data-a="seg" data-v="plan">Ver qué pedir con tu caja</button></div>` : empty('Todo el stock aguanta. Nada que pedir hoy.');
-  return `<div class="toolbar">${seg}<button class="btn-g" data-a="model">+ Reloj</button></div>
+  return `<div class="toolbar">${seg}<span style="display:flex;gap:6px"><button class="btn-o" data-a="catchup">Ponerme al día</button><button class="btn-g" data-a="model">+ Reloj</button></span></div>
     <div class="cols wide"><div class="col">${panel('Relojes', `<div class="filters">${chips}</div>` + table)}</div>
     <div class="col">${panel('Alertas de stock', al, alerts.length ? String(alerts.length) : '')}${panel('Resumen', sumT)}</div></div>`;
 }
@@ -732,6 +732,14 @@ function sheetHTML() {
         <div style="display:flex;gap:8px;flex-wrap:wrap">${ss.enabled ? '<button class="ghost" data-a="sync-now">Sincronizar ahora</button>' : ''}<button class="ghost" data-a="export">Descargar copia</button>${ss.enabled && ss.user ? '<button class="ghost" data-a="logout">Cerrar sesión</button>' : ''}</div></div>`;
   }
   if (kind === 'moves') return head('MEJORES MOVIMIENTOS') + movesTable(brain().moves);
+  if (kind === 'catchup') {
+    const ms = sortedModels().filter((m) => m.status !== 'descartado'), accs = acctNames();
+    return head('PONERME AL DÍA') + `<div class="hint">Lo que la app no sabe. Rellena solo lo que cambia; lo vacío se queda igual. "Vendidos" = los de los últimos 14 días que NO apuntaste (solo para calcular ritmo, no cuentan como ventas en la caja).</div>
+      ${ms.map((m) => { const lv = liveOf(m.id).map((l) => l.account); return `<div class="cu"><b>${esc(m.name)}</b><span class="sub">${STATUS[m.status] || ''}${lv.length ? ' · publicado en ' + esc(lv.join(', ')) : ''}</span>
+        <div class="fields3">${fld('cu-h-' + m.id, 'En casa', n0(m.home), 'inputmode="numeric"')}${fld('cu-s-' + m.id, 'Vendidos 14 días', m.baseAt && m.baseAt >= shiftDay(todayKey(), -13) ? n0(m.base14) : '', 'inputmode="numeric" placeholder="0"')}
+        <div class="field"><label for="cu-a-${m.id}">Publicado en</label><select id="cu-a-${esc(m.id)}"><option value="">${lv.length ? 'ya apuntado' : 'no / no sé'}</option>${accs.filter((a) => !lv.includes(a)).map((a) => `<option>${esc(a)}</option>`).join('')}</select></div></div></div>`; }).join('')}
+      <div class="err" id="sh-err"></div><button class="primary" data-a="save-catchup">Guardar</button>`;
+  }
   if (kind === 'test') {
     const t = brain().tests.find((z) => z.m.id === ctx.id);
     if (!t) return head('TEST') + empty('Este reloj ya no está en test.') + `<button class="ghost" data-a="model" data-id="${esc(ctx.id)}">Abrir reloj</button>`;
@@ -1086,6 +1094,17 @@ async function del(col, id) {
   if (col === 'bills') { const b = db.get(C.bills, id); if (b && b.spendId) await db.remove(C.spend, b.spendId); }
   await db.remove(C[col], id); toast('Borrado');
 }
+async function saveCatchup() {
+  const t = todayKey();
+  for (const m of L('models').filter((z) => z.status !== 'descartado')) {
+    const h = sv('cu-h-' + m.id), sd = sv('cu-s-' + m.id), a = sv('cu-a-' + m.id), p = {};
+    if (h !== '' && Math.round(n0(h)) !== n0(m.home)) p.home = Math.max(0, Math.round(n0(h)));
+    if (sd !== '') { p.base14 = Math.max(0, Math.round(n0(sd))); p.baseAt = t; }
+    if (Object.keys(p).length) await db.patch(C.models, m.id, p);
+    if (a) await db.put(C.listings, { modelId: m.id, account: a, price: n0(m.listPrice) || 34.95, listedAt: nowISO(), status: 'live', snaps: [] });
+  }
+  closeSheet(); toast('Al día · los cálculos ya usan tus números reales');
+}
 async function saveSnap() {
   const id = sv('t-l'), l = db.get(C.listings, id); if (!l) return shErr('Elige el anuncio.');
   const v = num(sv('t-v')), f = num(sv('t-f')), o = num(sv('t-o')), b = num(sv('t-b'));
@@ -1148,7 +1167,7 @@ function exportBackup() {
 
 /* ---------------- events ---------------- */
 const SAVE = { 'save-sale': saveSale, 'save-order': saveOrder, 'save-receive': saveReceive, 'save-spend': saveSpend, 'save-income': saveIncome, 'save-model': saveModel, 'save-settings': saveSettings, 'save-bill': saveBill, 'save-goal': saveGoal,
-  'save-snap': saveSnap, 'save-newtest': saveNewTest, 'save-listing': saveListing, 'save-acc': saveAcc, 'save-plan': savePlan, 'save-debt': saveDebt };
+  'save-snap': saveSnap, 'save-catchup': saveCatchup, 'save-newtest': saveNewTest, 'save-listing': saveListing, 'save-acc': saveAcc, 'save-plan': savePlan, 'save-debt': saveDebt };
 function setTab(v) { st.tab = v; lsSet('lg_tab', v); if (location.hash.slice(1) !== v) history.replaceState(null, '', '#' + v); window.scrollTo(0, 0); renderSoon(); }
 document.addEventListener('click', async (e) => {
   if (e.target === sheetEl) { closeSheet(); return; }
@@ -1205,6 +1224,7 @@ document.addEventListener('click', async (e) => {
     }
     case 'goto-plan': st.stockSeg = 'plan'; lsSet('lg_seg', 'plan'); if (st.sheet) closeSheet(); setTab('stock'); break;
     case 'moves': openSheet('moves'); break;
+    case 'catchup': openSheet('catchup'); break;
     case 'test': openSheet('test', { id: b.dataset.id }); break;
     case 'newtest': openSheet('newtest'); break;
     case 'listing': openSheet('listing', { id: b.dataset.id }); break;

@@ -314,3 +314,8 @@ body.chatmode { padding-bottom: calc(170px + env(safe-area-inset-bottom, 0px)); 
 .lead2 { margin: 0; font-size: 14.5px; }
 .steps { margin: 0; padding-left: 20px; display: grid; gap: 3px; font-size: 14px; }
 @media (min-width: 900px) { .composer { bottom: 0; } body.chatmode { padding-bottom: 120px; } }
+
+.cu { border: 1px solid var(--grid); padding: 9px 10px; display: grid; gap: 6px; }
+.cu .sub { font-size: 11.5px; color: var(--muted); }
+.fields3 { display: grid; grid-template-columns: 70px 92px minmax(0, 1fr); gap: 8px; }
+.fields3 input, .fields3 select { padding: 8px 7px !important; font-size: 15px !important; }
