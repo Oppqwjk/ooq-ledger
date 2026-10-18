@@ -65,8 +65,9 @@ export function planStock(x) {
 
   // sales income from the simulated stock (credited when Vinted releases it)
   const income = (F, sim) => { const inc = new Array(H + 1).fill(0); sim.sold.forEach((q, i) => { const j = i + cash.releaseDays; if (j <= H) inc[j] += q * F.price; }); return inc; };
-  for (const F of fams) { F.sim = simulate(F); F.inc = income(F, F.sim); F.inc.forEach((v, i) => { money[i] += v; }); }
+  for (const F of fams) { F.sim = simulate(F); F.sim0 = F.sim; F.inc = income(F, F.sim); F.inc.forEach((v, i) => { money[i] += v; }); }
   const balance = () => { let b = 0; return money.map((v) => (b += v)); };
+  const money0 = balance(); // reality: what you have and what's already coming, no new orders
 
   // next order per family, earliest first; each order's cost comes out of the money for the next ones
   const orders = [];
@@ -114,7 +115,7 @@ export function planStock(x) {
   const bal = balance();
   const low = bal.reduce((m, v, i) => (v < m.v ? { v, i } : m), { v: Infinity, i: 0 });
   return {
-    days, fams, orders: orders.sort((a, b) => a.date.localeCompare(b.date)), money: bal, lead: L, cushion,
+    days, fams, orders: orders.sort((a, b) => a.date.localeCompare(b.date)), money: bal, money0, lead: L, cushion,
     low: { amount: low.v, date: days[low.i] }, in30: bal[Math.min(H, 30)],
   };
 }

@@ -375,7 +375,7 @@ export function accountsNeeded(acc, pace) {
 export function proofOf(m, sales, listings) {
   const sold = sales.filter((v) => v.modelId === m.id && !v.cancelled).length + Math.round(n0(m.base14));
   const offers = Math.max(0, ...listings.filter((l) => l.modelId === m.id).map((l) => n0((latestSnap(l) || {}).offers)));
-  return { sold, offers, ok: sold >= 1 || offers >= 2 };
+  return { sold, offers, ok: sold >= 1 || offers >= 2 || !!m.testWin }; // testWin: passed the test on rating (likes and views)
 }
 export function effStatus(m, sales, listings) {
   if (m.status !== 'ganador' && m.status !== 'test') return m.status;
