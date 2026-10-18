@@ -879,10 +879,12 @@ function sheetHTML() {
         <div style="display:flex;gap:8px;flex-wrap:wrap">${ss.enabled ? '<button class="ghost" data-a="sync-now">Sincronizar ahora</button>' : ''}<button class="ghost" data-a="export-ai">Copiar para Claude</button><button class="ghost" data-a="import">Importar ventas (CSV)</button><button class="ghost" data-a="export">Descargar copia</button>${ss.enabled && ss.user ? '<button class="ghost" data-a="logout">Cerrar sesión</button>' : ''}</div></div>`;
   }
   if (kind === 'import') {
-    const accs = acctNames(), main = brain().acc.mainName || accs[0];
+    const accs = acctNames(), main = brain().acc.mainName || accs[0], other = accs.find((a) => a !== main) || main;
     return head('IMPORTAR VENTAS') + `<div class="hint">Tu historial en CSV: <b>date,item,sold,cost,boost</b>. Gold, Silver, Bronze → Watch 1 · TWIY → Watch 2 · el resto (Mstianq, Rokyn, Poedagar…) queda como descartado.</div>
       <div class="field"><label for="imp-txt">Pega el CSV</label><textarea id="imp-txt" rows="7" style="font:13px/1.4 ui-monospace,monospace;background:var(--surface-2);border:1px solid var(--line);border-radius:11px;padding:10px 12px;width:100%;resize:vertical" placeholder="date,item,sold,cost,boost&#10;2026-07-12,TWIY,34.41,6.13,1.86">${esc(ctx.txt || '')}</textarea></div>
-      <div class="fields2"><div class="field"><label for="imp-acc">Cuenta de esas ventas</label><select id="imp-acc">${accs.map((a) => `<option${a === main ? ' selected' : ''}>${esc(a)}</option>`).join('')}</select></div><div class="field"><label for="imp-file">o un archivo .csv</label><input id="imp-file" type="file" accept=".csv,.txt,text/csv,text/plain"></div></div>
+      <div class="field"><label for="imp-file">o un archivo .csv</label><input id="imp-file" type="file" accept=".csv,.txt,text/csv,text/plain"></div>
+      <div class="fields2"><div class="field"><label for="imp-acc">Cuenta de esas ventas</label><select id="imp-acc">${accs.length > 1 ? `<option value="__split" selected>Repartir entre ${esc(other)} y ${esc(main)}</option>` : ''}${accs.map((a) => `<option>${esc(a)}</option>`).join('')}</select></div>${accs.length > 1 ? fld('imp-pct', '% en ' + esc(other), '65', 'inputmode="numeric"') : ''}</div>
+      <div class="hint">Si no sabes de qué cuenta fue cada venta, se reparten por fechas en ese % (marcadas como cuenta aproximada).</div>
       <div id="imp-prev">${importPreview(ctx.txt || '')}</div><div class="err" id="sh-err"></div><button class="primary" data-a="save-import">Importar</button>`;
   }
   if (kind === 'moves') return head('MEJORES MOVIMIENTOS') + movesTable(brain().moves);
@@ -1482,7 +1484,7 @@ document.addEventListener('click', async (e) => {
     case 'settings': openSheet('settings'); break;
     case 'import': openSheet('import', {}); break;
     case 'save-import': {
-      const btn = b; btn.disabled = true; const res = await runImport(sv('imp-txt'), sv('imp-acc'));
+      const btn = b; btn.disabled = true; const res = await runImport(sv('imp-txt'), sv('imp-acc'), sv('imp-pct'));
       btn.disabled = false; if (res.err) { shErr(res.err); break; }
       closeSheet(); toast(`${res.nS} ventas importadas · boosts ${eur(res.boosts)}`); break;
     }
@@ -1633,7 +1635,8 @@ function importRows(p) {
   const seen = {};
   return p.sales.map((r) => { const base = `imp-${r.date}-${nm(r.item).replace(/ /g, '')}-${r.sold}-${r.cost}`; seen[base] = (seen[base] || 0) + 1; return { ...r, id: base + '-' + seen[base] }; });
 }
-async function runImport(txt, acc) {
+async function runImport(txt, acc, pct) {
+  const accs = acctNames(), main = brain().acc.mainName || accs[0], other = accs.find((a) => a !== main) || main, split = acc === '__split', f = Math.max(0, Math.min(100, n0(pct))) / 100;
   const p = parseImport(txt); if (!p.sales.length) return { err: 'No hay ventas que leer.' };
   const mids = {};
   for (const k of Object.keys(CORE)) if (p.sales.some((r) => r.key === k)) mids[k] = (await ensureCore(k, true)).id;
@@ -1645,9 +1648,12 @@ async function runImport(txt, acc) {
     mids['x:' + n] = m.id;
   }
   let nS = 0;
-  for (const r of importRows(p)) {
+  // split by date order: the other account gets f of the sales, spread evenly over time
+  const rowsI = importRows(p).sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
+  rowsI.forEach((r, i) => { r.acc = !split ? acc : Math.floor((i + 1) * f) > Math.floor(i * f) ? other : main; });
+  for (const r of rowsI) {
     const mid = r.key ? mids[r.key] : mids['x:' + nm(r.item)], m = model(mid), at = r.date + 'T12:00:00.000Z';
-    await db.put(C.sales, { id: r.id, date: r.date, at, modelId: mid, modelName: m ? m.name : r.item, price: r.sold, cost: r.cost, watchCost: r.cost, extra: 0, estimated: false, profit: r2(r.sold - r.cost), account: acc, fromStock: false, pouch: false, released: true, releasedAt: at, imported: true });
+    await db.put(C.sales, { id: r.id, date: r.date, at, modelId: mid, modelName: m ? m.name : r.item, price: r.sold, cost: r.cost, watchCost: r.cost, extra: 0, estimated: false, profit: r2(r.sold - r.cost), account: r.acc, accountEstimated: split || undefined, fromStock: false, pouch: false, released: true, releasedAt: at, imported: true });
     nS++;
   }
   const days = {}; for (const r of p.rows) if (r.boost > 0) { const d = (days[r.date] = days[r.date] || { amt: 0, n: 0 }); d.amt += r.boost; d.n++; }
