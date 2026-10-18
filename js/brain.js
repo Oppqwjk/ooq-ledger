@@ -63,30 +63,33 @@ export function demand(mid, sales, today, m) {
   arr2.forEach((c, i) => { const w = Math.pow(0.5, (arr2.length - 1 - i) / 7); ws += w * c; wt += w; });
   // only a few days of history: pad to 7 so 3 sales on day 1 isn't read as 3/day forever
   for (let i = arr2.length; i < 7; i++) { wt += 1; arr2.push(0); }
-  const rate = ws / wt, mean = sum(arr2) / arr2.length;
+  const rateW = ws / wt, mean = sum(arr2) / arr2.length, rate = mean;
   const sd = Math.sqrt(sum(arr2.map((c) => (c - mean) ** 2)) / arr2.length);
   const tail = seq.map((k) => counts[k] || 0), last7 = sum(tail.slice(-7)), prev7 = sum(tail.slice(-14, -7));
   const n28 = sum(tail);
-  return { rate, last7, prev7, last14: last7 + prev7, total: mine.length, n28, sd, lastSale, first, trend: prev7 ? last7 / prev7 - 1 : last7 ? 1 : 0, basis, segEnd: segs[segs.length - 1][1], days: seq.length };
+  return { rate, last7, prev7, last14: last7 + prev7, total: mine.length, n28, sd, lastSale, first, trend: prev7 ? last7 / prev7 - 1 : last7 ? 1 : 0, basis, segEnd: segs[segs.length - 1][1], days: seq.length, rateW };
 }
 
 /* ---------------- lead times ---------------- */
 // Learned from your own received orders per lane (last 3). Falls back until you have some.
 export function leadTimes(orders, s) {
-  const def = { dhl: n0(s.leadDHL) || FALLBACK.leadDHL, ddp: n0(s.leadDDP) || FALLBACK.leadDDP };
-  const defSrc = { dhl: n0(s.leadDHL) ? 'puesto por ti en Ajustes' : 'por defecto', ddp: n0(s.leadDDP) ? 'puesto por ti en Ajustes' : 'por defecto' };
+  // two ways to ship: DDP (taxes paid with the order) and DUA (taxes paid when it arrives). Old DHL orders count as DUA.
+  const def = { ddp: n0(s.leadDDP) || FALLBACK.leadDDP }; def.dua = n0(s.leadDUA) || def.ddp; def.dhl = def.dua;
+  const defSrc = { ddp: n0(s.leadDDP) ? 'puesto por ti en Ajustes' : 'por defecto', dua: n0(s.leadDUA) ? 'puesto por ti en Ajustes' : n0(s.leadDDP) ? 'igual que DDP (Ajustes)' : 'por defecto' }; defSrc.dhl = defSrc.dua;
   def.otro = n0(s.leadOtro) || def.ddp; // old orders marked "otro": treated as DDP unless you set a plazo
   const out = {};
-  for (const lane of ['dhl', 'ddp', 'otro']) {
-    const got = orders.filter((o) => (o.lane || 'otro') === lane && o.status === 'recibido' && o.receivedDate && o.date)
+  const laneOf = (o) => (o.lane === 'dhl' || o.lane === 'dua' ? 'dua' : 'ddp');
+  for (const lane of ['ddp', 'dua']) {
+    const got = orders.filter((o) => laneOf(o) === lane && o.status === 'recibido' && o.receivedDate && o.date)
       .sort((a, b) => b.date.localeCompare(a.date)).slice(0, 3).map((o) => diffD(o.date, o.receivedDate)).filter((x) => x >= 0);
     out[lane] = got.length ? Math.max(1, Math.round(sum(got) / got.length)) : def[lane];
     out[lane + 'N'] = got.length;
     out[lane + 'Src'] = got.length ? `medido en ${got.length} pedido${got.length > 1 ? 's' : ''} recibido${got.length > 1 ? 's' : ''}` : defSrc[lane] || defSrc.ddp;
   }
+  out.dhl = out.dua; out.dhlN = out.duaN; out.dhlSrc = out.duaSrc; out.otro = out.ddp;
   return out;
 }
-export const etaOf = (o, lead) => o.eta || addD(o.date, lead[o.lane || 'otro'] || lead.ddp);
+export const etaOf = (o, lead) => o.eta || addD(o.date, (o.lane === 'dhl' || o.lane === 'dua' ? lead.dua : lead.ddp) || lead.ddp);
 
 /* ---------------- stock ---------------- */
 export function unitProfit(m, sales, costOf) {
@@ -145,7 +148,7 @@ function stockCore(m, d, x, r) {
   if (next && next.eta > r.outDate) r.gap = diffD(r.outDate, next.eta);
   // a new DDP order lands in L days; anything that runs out before that has to be bridged with DHL
   // DHL only for real sellers (2+ a week) that would actually run dry before a DDP lands; a slow watch just waits for DDP
-  const fast = rate >= 0.3, short = L - Math.max(r.coverAll, Ld);
+  const fast = false, short = L - Math.max(r.coverAll, Ld); // no express shipping: everything goes by DDP/DUA
   if (fast && r.coverAll < L - 3 && short > 0) r.bridge = Math.max(5, ceil5(rate * short + r.safety));
   // home runs out before the box on the way lands: a DHL box can fill that hole only if it lands first
   r.dhlInTime = !next || addD(today, Ld) < next.eta;
@@ -164,7 +167,7 @@ function stockCore(m, d, x, r) {
   const paceNote = d.basis === 'hasta-rotura' ? ` · ritmo de cuando tenía stock (28 días hasta el ${fd(d.segEnd)}): ${rate.toFixed(2).replace('.', ',')}/día` : d.basis === 'con-stock' ? ' · ritmo solo de días con stock' : '';
   if (stock > r.rop) r.orderBy = addD(today, Math.max(0, Math.floor((stock - r.rop) / rate)));
   if (home === 0) { r.status = 'rotura'; r.why = transit ? `0 en casa · llegan ${transit} el ${fd(next ? next.eta : '')}${r.bridge ? ` → DHL ${r.bridge} uds tapa el hueco` : ''}` : `0 en casa y nada en camino · pierdes ~${(rate * 7).toFixed(1)} ventas/semana`; }
-  else if (r.gap > 0) { r.status = 'urgente'; r.why = `se acaba el ${fd(r.outDate)}, el pedido llega el ${fd(next.eta)} → ${r.gap} días sin stock` + (r.bridge ? ` → DHL ${r.bridge} uds ya` : ' → DHL tampoco llega antes: no aceptes ofertas bajas, vende a precio completo'); }
+  else if (r.gap > 0) { r.status = 'urgente'; r.why = `se acaba el ${fd(r.outDate)}, el pedido llega el ${fd(next.eta)} → ${r.gap} días sin stock` + ' → vende a precio completo hasta que llegue'; }
   else if (r.coverAll < L && r.bridge) { r.status = 'urgente'; r.why = `${Math.floor(r.coverAll)} días de stock y un DDP tarda ${L} → DHL ${r.bridge} para no parar`; }
   else if (r.coverAll < L) { r.status = 'pedir'; r.why = `${Math.floor(r.coverAll)} días de stock, vende ${rate < 0.15 ? '1 cada ' + Math.round(1 / rate) + ' días' : rate.toFixed(1).replace('.', ',') + '/día'} → DDP hoy y llega a tiempo de sobra`; }
   else if (stock <= r.rop) { r.status = 'pedir'; r.why = `${Math.floor(r.coverAll)} días de stock → pide ya para no quedarte sin`; }
@@ -448,7 +451,7 @@ export function analyze(input) {
   const add = (p, tag, title, why, act) => moves.push({ p, tag, title, why, act });
   const logged14 = sales.filter((v) => v.date >= addD(today, -13)).length;
   const based = models.some((m) => m.baseAt && diffD(m.baseAt, today) <= 27);
-  if (logged14 < 10 && !based) add(99, 'Datos', `Solo veo ${logged14} venta${logged14 === 1 ? '' : 's'} en 14 días`, 'si vendes más, ponme al día (2 min) o todo lo que te digo sale de casi nada', { a: 'catchup' });
+  if (false && logged14 < 10 && !based) add(99, 'Datos', `Solo veo ${logged14} venta${logged14 === 1 ? '' : 's'} en 14 días`, 'si vendes más, ponme al día (2 min) o todo lo que te digo sale de casi nada', { a: 'catchup' });
   for (const dp of possibleDupes(models, settings.notDupes || [])) add(97, 'Datos', `¿${dp.a.name} y ${dp.b.name} son el mismo reloj?`, 'las ventas de uno no cuentan para el stock del otro → si es el mismo, fusiónalos (Stock → reloj → Fusionar)', { a: 'model', id: dp.a.id });
   const orphan = sales.filter((v) => !v.cancelled && !input.models.some((m) => m.id === v.modelId)).length;
   const noCost = sales.filter((v) => !v.cancelled && v.costMissing).length, unknown = sales.filter((v) => !v.cancelled && /sin especificar/i.test((input.models.find((m) => m.id === v.modelId) || {}).name || '')).length;

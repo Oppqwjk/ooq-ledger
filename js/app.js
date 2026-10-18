@@ -3,6 +3,7 @@
 import * as db from './db.js';
 import * as sync from './sync.js';
 import * as B from './brain.js';
+import * as P from './plan.js';
 import { createAgent, MODES as AI_MODES } from './agent.js';
 
 const C = { settings: 'lg-settings', models: 'lg-models', sales: 'lg-sales', orders: 'lg-orders', spend: 'lg-spend', income: 'lg-income', bills: 'lg-bills', goals: 'lg-goals', listings: 'lg-listings', chat: 'lg-chat', transfers: 'lg-transfers' };
@@ -194,7 +195,7 @@ function brain() {
   return brainCache;
 }
 const stockOf = (id) => brain().stocks.find((s) => s.m.id === id) || null;
-const agent = createAgent({ db, C, L, model, S0, brain, fresh: () => { brainCache = null; }, costOf, todayKey, nowISO, patchSettings, pouches, pouchCost, cashNow, bankNow, vintedBalance, pendingVinted, owedTotal, spendable, pendingBills, costSrc, landedFromOrder, billsDue: () => L('bills').filter((b) => b.month <= curMonth() && !b.paid).map((b) => `${b.month} ${b.concept} ${n0(b.amount)} €`) });
+const agent = createAgent({ db, C, L, model, S0, brain, fresh: () => { brainCache = null; }, costOf, todayKey, nowISO, patchSettings, pouches, pouchCost, cashNow, bankNow, vintedBalance, pendingVinted, owedTotal, spendable, pendingBills, costSrc, landedFromOrder, plan: () => plan(), billsDue: () => L('bills').filter((b) => b.month <= curMonth() && !b.paid).map((b) => `${b.month} ${b.concept} ${n0(b.amount)} €`) });
 const SST = { 'en camino': ['En camino', 'mut'], 'no repone': ['No se repone', 'mut'], enfria: ['Se enfría', 'warn'], rotura: ['Sin stock', 'neg'], urgente: ['Urgente', 'neg'], pedir: ['Pedir', 'warn'], ok: ['OK', 'pos'], exceso: ['Exceso', 'warn'], parado: ['Parado', 'warn'], liquidar: ['Liquidar', 'warn'], lento: ['Lento', 'mut'], 'sin datos': ['Sin ventas', 'mut'], fuera: ['Fuera', 'mut'] };
 const days1 = (v) => (v === Infinity || isNaN(v) ? '∞' : v >= 100 ? '99+' : String(Math.floor(v)));
 const rate1 = (v) => (v ? v.toFixed(v < 1 ? 2 : 1).replace('.', ',') : '0');
@@ -205,8 +206,8 @@ const acctNames = () => S0().accounts || [];
 const liveOf = (mid) => L('listings').filter((l) => l.modelId === mid && l.status === 'live');
 
 /* ---------------- state ---------------- */
-const TABS = [['inicio', 'Inicio'], ['calendario', 'P&L'], ['stock', 'Stock'], ['tests', 'Tests'], ['cuentas', 'Cuentas'], ['gastos', 'Gastos'], ['metas', 'Plan']];
-const BAR = ['inicio', 'calendario', 'stock', 'tests', 'cuentas', 'gastos'];
+const TABS = [['calendario', 'P&L'], ['stock', 'Stock'], ['tests', 'Tests'], ['gastos', 'Gastos'], ['metas', 'Plan'], ['cuentas', 'Cuentas']];
+const BAR = ['calendario', 'stock', 'tests', 'gastos', 'metas'];
 const ICONS = {
   inicio: '<path d="M4 11 12 4.5l8 6.5v8.5a1.5 1.5 0 0 1-1.5 1.5H15v-6h-6v6H5.5A1.5 1.5 0 0 1 4 19.5z"/>',
   manager: '<path d="M5 5.5h14a1.5 1.5 0 0 1 1.5 1.5v9a1.5 1.5 0 0 1-1.5 1.5h-7.5L7 21v-3.5H5A1.5 1.5 0 0 1 3.5 16V7A1.5 1.5 0 0 1 5 5.5z"/><path d="M8.5 11.5h.01M12 11.5h.01M15.5 11.5h.01"/>',
@@ -218,7 +219,7 @@ const ICONS = {
   metas: '<path d="M5 21V4M5 4h11l-2 4 2 4H5"/>',
 };
 const st = {
-  tab: (location.hash.slice(1) && TABS.some((t) => t[0] === location.hash.slice(1))) ? location.hash.slice(1) : lsGet('lg_tab', 'inicio'),
+  tab: (location.hash.slice(1) && TABS.some((t) => t[0] === location.hash.slice(1))) ? location.hash.slice(1) : TABS.some((t) => t[0] === lsGet('lg_tab', '')) ? lsGet('lg_tab', '') : 'calendario',
   month: curMonth(), selDay: todayKey(), calMode: lsGet('lg_cal', 'profit'), stockSeg: lsGet('lg_seg', 'relojes'), filter: lsGet('lg_filter', 'activos'),
   confirm: null, sheet: null,
   chatBusy: false, chatErr: '', chatImgs: [], chatLive: [], aiSetup: false, briefNew: false, aiMovesBusy: false, aiMovesErr: '',
@@ -263,7 +264,7 @@ function renderSoon() { if (rq) return; rq = true; requestAnimationFrame(() => {
 function render() {
   const main = $('#main'); if (!main) return;
   document.querySelectorAll('[data-a="tab"]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === st.tab)));
-  const v = { inicio: viewHome, calendario: viewCal, stock: viewStock, tests: viewTests, cuentas: viewAccounts, gastos: viewSpend, metas: viewGoals }[st.tab] || viewHome;
+  const v = { calendario: viewPnl, stock: viewStock2, tests: viewTests, cuentas: viewAccounts, gastos: viewSpend, metas: viewGoals }[st.tab] || viewPnl;
   brainCache = null;
   const chat = st.tab === 'manager' && !!agent.key() && !st.aiSetup;
   document.body.classList.toggle('chatmode', st.tab === 'manager');
@@ -493,7 +494,7 @@ function orderBody(o, pb) {
     ${tr('Pagado al pedir', eur(n0(o.paid)))}
     ${payments(o).map((p) => tr('Pagado ' + shortDate(p.date), eur(n0(p.amount)))).join('')}
     ${n0(o.owed) ? tr('Debes', `<b class="neg">${eur(n0(o.owed))}</b>`) : ''}
-    ${tr('Cobro DHL', o.status === 'recibido' ? eur(n0(o.dhl)) : '<span class="sub">al llegar</span>')}
+    ${isDua(o) || n0(o.dhl) ? tr('Impuestos al llegar (DUA)', o.status === 'recibido' ? eur(n0(o.dhl)) : '<span class="sub">al llegar · ~21% IVA</span>') : ''}
     ${tr('Coste total', eur(cost), 'tot')}
     ${tr('Vendidos', pb.sold + ' de ' + pb.units)}
     ${tr('Recuperado', money(rec))}
@@ -545,18 +546,19 @@ function dayRows(k) {
   const prof = st.calMode === 'profit';
   L('sales').filter((s) => s.date === k).forEach((s) => { h += line(esc(s.modelName || 'Venta'), 'vendido ' + eur(n0(s.price)) + (s.account ? ' · ' + esc(s.account) : ''), prof ? money(profitOf(s), true) : `<span class="sub">${eur(n0(s.price))} → Vinted</span>`, 'sales', s.id); });
   L('orders').filter((o) => o.date === k).forEach((o) => { h += line('Pedido de stock', (o.lines || []).reduce((a, l) => a + n0(l.qty), 0) + ' relojes', prof ? '<span class="sub">no resta beneficio</span>' : money(-n0(o.paid)), null, o.id); });
-  L('orders').filter((o) => o.receivedDate === k && n0(o.dhl)).forEach((o) => { h += line('Cobro DHL', 'pedido ' + shortDate(o.date), prof ? '<span class="sub">va en el coste</span>' : money(-n0(o.dhl)), null, o.id + 'd'); });
+  L('orders').filter((o) => o.receivedDate === k && n0(o.dhl)).forEach((o) => { h += line('Impuestos DUA', 'pedido ' + shortDate(o.date), prof ? '<span class="sub">va en el coste</span>' : money(-n0(o.dhl)), null, o.id + 'd'); });
   L('spend').filter((x) => x.date === k).forEach((x) => { const biz = x.kind === 'negocio'; h += line(esc(x.cat) + (x.note ? ' · ' + esc(x.note) : ''), biz ? 'negocio' : 'personal', biz || !prof ? money(-n0(x.amount)) : `<span class="sub">${eur(-n0(x.amount))}</span>`, 'spend', x.id); });
   L('income').filter((x) => x.date === k).forEach((x) => { h += line(esc(x.note || 'Ingreso'), 'ingreso', money(n0(x.amount), true), 'income', x.id); });
   L('transfers').filter((x) => x.date === k).forEach((x) => { h += line('Retiro de Vinted', esc(x.account || ''), prof ? `<span class="sub">${eur(n0(x.amount))}</span>` : money(n0(x.amount), true), 'transfers', x.id); });
   return h;
 }
 
-const LANE = { dhl: 'DHL', ddp: 'DDP', otro: 'DDP' };
+const LANE = { dhl: 'DUA', dua: 'DUA', ddp: 'DDP', otro: 'DDP' };
+const isDua = (o) => o && (o.lane === 'dua' || o.lane === 'dhl'); // DUA: taxes paid when it lands (old DHL orders too)
 function stockBadge(r) {
   if (!r) return '';
   const [lb, c] = SST[r.status] || ['', ''];
-  const q = r.bridge ? `DHL ${r.bridge}${r.ddpQty ? ' + DDP ' + r.ddpQty : ''}` : r.ddpQty ? 'DDP ' + r.ddpQty : '';
+  const q = r.ddpQty ? 'pedir ' + r.ddpQty : '';
   return `<b class="${c}">${lb}</b>${q && ['rotura', 'urgente', 'pedir'].includes(r.status) ? ' · ' + q : ''}`;
 }
 function viewStock() {
@@ -612,6 +614,244 @@ function viewPlan(seg, bz) {
   const skip = pl.skipped.length ? panel('Sin caja para', `<table class="xl list"><tbody>${pl.skipped.map((k) => `<tr><td>${esc(k.s.m.name)}<span class="sub">${LANE[k.lane]} ${k.want} uds · ${eur(k.want * costOf(k.s.m))} · ${esc(k.s.why)}</span></td></tr>`).join('')}</tbody></table><div class="foot">Vende o paga deudas primero. En cuanto haya caja aparece arriba.</div>`) : '';
   const how = `<div class="foot">Ritmo = ventas de 28 días, las recientes pesan más. Colchón de seguridad según cuánto varían tus ventas. Pide para cubrir lo que tarda el DDP + ${n0(S0().cycleDays) || B.FALLBACK.cycleDays} días. Si se acaba antes de que llegue un DDP, el hueco va por DHL. Coste por unidad = coste puesto del reloj.</div>`;
   return `<div class="toolbar">${seg}</div><div class="cols wide"><div class="col">${panel('Pedido recomendado', body)}${skip}</div><div class="col">${panel('Tu caja y plazos', head2 + how)}</div></div>`;
+}
+
+/* ================= shared: photos, plan, prices ================= */
+const thumb = (m, size = 40) => m && m.photo ? `<img class="thumb" src="${m.photo}" alt="" width="${size}" height="${size}" style="width:${size}px;height:${size}px">` : `<span class="thumb ph" style="width:${size}px;height:${size}px">${esc(String((m && m.name) || '?').replace(/^watch\s*/i, 'W').slice(0, 2))}</span>`;
+function priceOf(m) {
+  const ps = L('sales').filter((v) => v.modelId === m.id && !v.cancelled).sort((a, b) => (b.at || b.date).localeCompare(a.at || a.date)).slice(0, 10).map((v) => n0(v.price));
+  return ps.length ? sum(ps) / ps.length : n0(m.listPrice) || 29.95;
+}
+function cashInput() {
+  const t = todayKey(), pd = pendingDays(), bz = brain();
+  const pending = pendingSales().map((x) => ({ on: shiftDay(x.date, pd), amount: n0(x.price) }));
+  const bills = L('bills').filter((b) => !b.paid).map((b) => ({ on: b.month <= curMonth() ? t : b.month + '-01', amount: n0(b.amount), label: b.concept }));
+  const debts = L('orders').filter((o) => n0(o.owed) > 0).map((o) => ({ on: o.status === 'recibido' ? t : B.etaOf(o, bz.lead), amount: n0(o.owed) }));
+  const from = shiftDay(t, -29), sp = sum(L('spend').filter((x) => x.date >= from && x.date <= t && !x.imported).map((x) => n0(x.amount)));
+  return { now: bankNow() + vintedBalance(), pending, bills, debts, spendPerDay: sp / 30, releaseDays: pd };
+}
+function plan() {
+  const bz = brain();
+  if (!bz._plan) bz._plan = P.planStock({ today: todayKey(), stocks: bz.stocks, lead: bz.lead, settings: S0(), cash: cashInput(), priceOf });
+  return bz._plan;
+}
+const dShort = (k) => (k ? shortDate(k) : '—');
+const inDays = (k) => { const d = B.diffD(todayKey(), k); return d <= 0 ? 'hoy' : d === 1 ? 'mañana' : `en ${d} días`; };
+
+/* ================= P&L: the centre of everything ================= */
+const pctTxt = (v) => (v === null || !isFinite(v) ? '—' : Math.round(v * 100) + '%');
+function monthStats(mk, uptoDay) {
+  const dim = daysIn(mk), D = Math.min(dim, uptoDay || dim);
+  let ss = parts(mk).sales; if (D < dim) ss = ss.filter((x) => Number(x.date.slice(8)) <= D);
+  const rev = sum(ss.map((x) => n0(x.price))), prof = sum(ss.map(profitOf)), cogs = sum(ss.filter((x) => !x.costMissing).map((x) => n0(x.cost)));
+  const biz = sum(on(L('spend'), mk).filter((x) => x.kind === 'negocio' && Number(x.date.slice(8)) <= D).map((x) => n0(x.amount)));
+  const net = prof - biz, byDay = {};
+  for (const x of ss) { const d = (byDay[x.date] = byDay[x.date] || { k: x.date, n: 0, rev: 0, pr: 0 }); d.n++; d.rev += n0(x.price); d.pr += profitOf(x); }
+  return { n: ss.length, rev, prof, biz, net, cogs, roi: cogs ? net / cogs : null, margin: rev ? net / rev : null, ticket: ss.length ? rev / ss.length : 0, days: Object.values(byDay) };
+}
+// best and worst days only among days you sold something: a day with 0 sales is not a "worst day"
+function bestWorst(mk) {
+  const ds = monthStats(mk).days, key = st.calMode === 'units' ? 'n' : 'pr';
+  const sorted = ds.slice().sort((a, b) => b[key] - a[key] || b.n - a.n);
+  const best = sorted.length >= 2 ? sorted.slice(0, Math.min(3, Math.floor(sorted.length / 2) || 1)) : [];
+  const worst = sorted.length >= 5 ? sorted.slice(-Math.min(3, Math.floor(sorted.length / 3))) : [];
+  return { best: new Set(best.map((d) => d.k)), worst: new Set(worst.map((d) => d.k).filter((k) => !best.some((b) => b.k === k))), top: sorted[0] || null, low: sorted.length >= 2 ? sorted[sorted.length - 1] : null };
+}
+function kpis(mk) {
+  const cm = curMonth(), cur = mk === cm, day = cur ? new Date().getDate() : daysIn(mk);
+  const a = monthStats(mk), prevMk = shiftMonth(mk, -1), b = monthStats(prevMk, cur ? day : 0), g = goalFor(mk), pc = planOf(mk);
+  const delta = (x, y) => (y ? `<span class="${x >= y ? 'pos' : 'neg'}">${x >= y ? '▲' : '▼'} ${Math.abs(Math.round((x / y - 1) * 100))}%</span>` : '');
+  const vs = cur ? 'vs mismo día del mes pasado' : 'vs mes anterior';
+  const pz = cur ? brain().pace : null, perSale = a.n ? a.net / a.n : 0;
+  const tile = (lbl, big, sub, cls2 = '') => `<div class="kpi ${cls2}"><span class="k-l">${lbl}</span><b class="k-v">${big}</b><span class="k-s">${sub}</span></div>`;
+  return `<div class="kpis">
+    ${tile('Beneficio neto', `<span class="${a.net < 0 ? 'neg' : ''}">${eur(a.net)}</span>`, `${pbar(a.net / g, a.net >= g ? 'won' : '')}<span>${Math.max(0, Math.round(a.net / g * 100))}% de ${eur(g)} ${delta(a.net, b.net)}</span>`, 'hero')}
+    ${tile('Ingresos', eur(a.rev), `${delta(a.rev, b.rev)} <span class="mut">${vs}</span>`)}
+    ${tile('Ventas', String(a.n) + (pc && n0(pc.sales) ? `<small> / ${n0(pc.sales)}</small>` : ''), `ticket medio ${eur(a.ticket)} ${delta(a.n, b.n)}`)}
+    ${tile('ROI', pctTxt(a.roi), 'beneficio ÷ lo que costaron los relojes vendidos')}
+    ${tile('Margen', pctTxt(a.margin), `de cada 100 € vendidos te quedan ${a.rev ? Math.round(a.net / a.rev * 100) : 0} €`)}
+    ${cur ? tile('A este ritmo', `${pz.proj} ventas`, `≈ ${eur(a.net + perSale * Math.max(0, pz.proj - a.n))} · límite ${esc(pz.limit === 'stock' ? 'stock' : 'ventas')}`) : tile('Gastos negocio', eur(a.biz), 'boosts y otros')}
+  </div>`;
+}
+function calGrid2(mk) {
+  const { y, m } = pm(mk), n = daysIn(mk), first = (new Date(y, m - 1, 1).getDay() + 6) % 7, tk = todayKey(), bw = bestWorst(mk);
+  const vals = [], cnt = []; for (let d = 1; d <= n; d++) { const k = mk + '-' + pad(d); vals.push(dayVal(k)); cnt.push(L('sales').filter((x) => x.date === k && !x.cancelled).length); }
+  const pos = vals.filter((v) => v > 0).sort((a, b) => a - b), q = (p) => pos[Math.floor((pos.length - 1) * p)] || 0;
+  const lvl = (v) => (v <= 0 ? 0 : v >= q(0.75) ? 4 : v >= q(0.5) ? 3 : v >= q(0.25) ? 2 : 1);
+  const cells = []; for (let i = 0; i < first; i++) cells.push(null); for (let d = 1; d <= n; d++) cells.push(d); while (cells.length % 7) cells.push(null);
+  let h = '<div class="cal2"><div class="ch">L</div><div class="ch">M</div><div class="ch">X</div><div class="ch">J</div><div class="ch">V</div><div class="ch">S</div><div class="ch">D</div><div class="ch wkc">Semana</div>';
+  for (let r = 0; r < cells.length; r += 7) {
+    let ws = 0, wn = 0;
+    for (let c = 0; c < 7; c++) {
+      const d = cells[r + c];
+      if (!d) { h += '<div class="day2 blank"></div>'; continue; }
+      const k = mk + '-' + pad(d), v = vals[d - 1], nS = cnt[d - 1]; ws += v; wn += nS;
+      const isB = bw.best.has(k), isW = bw.worst.has(k), no = L('orders').some((o) => o.date === k || o.receivedDate === k);
+      h += `<button class="day2 h${st.calMode === 'cash' ? (v > 0 ? 2 : v < 0 ? 'n' : 0) : lvl(v)}${v < 0 ? ' neg' : ''}${k === tk ? ' today' : ''}${k > tk ? ' future' : ''}${isB ? ' best' : ''}${isW ? ' worst' : ''}" data-a="day" data-v="${k}" aria-pressed="${k === st.selDay}" aria-label="${d} ${MONTHS[m - 1]}: ${v ? eur(v, true) : 'sin movimientos'}${isB ? ', de los mejores días' : ''}${isW ? ', de los flojos' : ''}">
+        <span class="dn">${d}${no ? '<i class="od" title="pedido"></i>' : ''}${isB ? '<i class="bdg b">★</i>' : isW ? '<i class="bdg w">▼</i>' : ''}</span>
+        <span class="dv">${v ? calTxt(v) : ''}</span><span class="dc">${nS && st.calMode !== 'units' ? nS + ' v' : ''}</span></button>`;
+    }
+    h += `<div class="wk2"><b class="${cls(ws)}">${ws ? calTxt(ws) : '·'}</b><span>${wn ? wn + ' ventas' : ''}</span></div>`;
+  }
+  return h + `</div><div class="legend cal-lg"><span><i class="sw h1"></i><i class="sw h2"></i><i class="sw h3"></i><i class="sw h4"></i> más beneficio</span><span><i class="bdg b">★</i> mejores días</span><span><i class="bdg w">▼</i> días flojos (de los que vendiste)</span><span><i class="od"></i> pedido</span></div>`;
+}
+function dayPanel2() {
+  const k = st.selDay, d = dateOf(k);
+  const title = WD[d.getDay()].replace(/^./, (c) => c.toUpperCase()) + ' ' + d.getDate() + ' ' + MSHORT[d.getMonth()];
+  const ss = L('sales').filter((x) => x.date === k && !x.cancelled), rows = dayRows(k), p = parts(k);
+  const head2 = `<div class="dayhead"><div><b>${ss.length}</b><span>ventas</span></div><div><b>${eur(p.revenue)}</b><span>vendido</span></div><div><b class="${p.net < 0 ? 'neg' : 'pos'}">${eur(p.net, true)}</b><span>beneficio</span></div></div>`;
+  const add = `<div class="quick"><button class="btn-g" data-a="add" data-mode="venta" data-date="${k}">+ Venta</button><button class="btn-o" data-a="add" data-mode="gasto" data-date="${k}">+ Gasto</button><button class="btn-o" data-a="add" data-mode="ingreso" data-date="${k}">+ Ingreso</button><button class="btn-o" data-a="add" data-mode="pedido" data-date="${k}">+ Pedido</button></div>`;
+  return panel(title, head2 + add + (rows ? `<table class="xl list"><tbody>${rows}</tbody></table>` : empty('Nada apuntado este día.')));
+}
+function insights(mk) {
+  const cm = curMonth(), t = todayKey(), a = monthStats(mk), el = mk === cm ? new Date().getDate() : daysIn(mk), bw = bestWorst(mk);
+  const sd = a.days.length, ns = a.days.map((d) => d.n);
+  // streaks this month
+  let run = 0, best = 0; for (let d = 1; d <= el; d++) { const k = mk + '-' + pad(d); if (a.days.some((x) => x.k === k)) { run++; best = Math.max(best, run); } else run = 0; }
+  const all = L('sales').filter((x) => !x.cancelled && x.date <= t), lastSale = all.map((x) => x.date).sort().pop();
+  const idle = lastSale ? B.diffD(lastSale, t) : null;
+  // weekday pattern over the last 90 days
+  const from = shiftDay(t, -89), wd = [0, 0, 0, 0, 0, 0, 0], occ = [0, 0, 0, 0, 0, 0, 0];
+  for (let i = 0; i < 90; i++) { const k = shiftDay(from, i); occ[(dateOf(k).getDay() + 6) % 7]++; }
+  for (const x of all.filter((x) => x.date >= from)) wd[(dateOf(x.date).getDay() + 6) % 7]++;
+  const avgWd = wd.map((v, i) => (occ[i] ? v / occ[i] : 0)), mx = Math.max(0.01, ...avgWd), topWd = avgWd.indexOf(Math.max(...avgWd));
+  const WDS = ['L', 'M', 'X', 'J', 'V', 'S', 'D'], WDL = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo'];
+  const bars = `<div class="wdbars">${avgWd.map((v, i) => `<div class="wdb${i === topWd ? ' top' : ''}" data-tip="${WDL[i]}: ${v.toFixed(2).replace('.', ',')} ventas de media"><i style="height:${Math.round(v / mx * 100)}%"></i><span>${WDS[i]}</span></div>`).join('')}</div>`;
+  const row = (l, v) => `<div class="kv"><span class="mut">${l}</span><b>${v}</b></div>`;
+  return panel('Cómo vendes', `<div class="ins">
+    ${row('Días con venta', `${sd} de ${el} <span class="mut">(${el ? Math.round(sd / el * 100) : 0}%)</span>`)}
+    ${row('Los días que vendes', sd ? `${(a.n / sd).toFixed(1).replace('.', ',')} ventas · ${eur(a.net / sd)}` : '—')}
+    ${row('Rango', sd ? `de ${Math.min(...ns)} a ${Math.max(...ns)} ventas al día` : '—')}
+    ${bw.top ? row('Mejor día', `${dShort(bw.top.k)} · ${bw.top.n} v · ${eur(bw.top.pr)}`) : ''}
+    ${bw.low ? row('Día más flojo (vendiendo)', `${dShort(bw.low.k)} · ${bw.low.n} v · ${eur(bw.low.pr)}`) : ''}
+    ${row('Mejor racha', best ? `${best} día${best === 1 ? '' : 's'} seguidos vendiendo` : '—')}
+    ${mk === cm && idle !== null ? row('Ahora', idle === 0 ? '<span class="pos">has vendido hoy</span>' : `<span class="${idle >= 4 ? 'neg' : ''}">${idle} día${idle === 1 ? '' : 's'} sin vender</span>`) : ''}
+    <div class="eyebrow" style="margin-top:6px">Por día de la semana · últimos 90 días</div>${bars}
+    <div class="mut sm2">Vinted va a rachas: mira semanas, no días sueltos.</div></div>`);
+}
+function monthsChart2() {
+  const cm = curMonth(), plan2 = S0().plan || {}, first = monthRange()[0] || cm, ms = [];
+  for (let m = shiftMonth(cm, -6) < first ? first : shiftMonth(cm, -6); m <= shiftMonth(cm, 1); m = shiftMonth(m, 1)) ms.push(m);
+  const rows = ms.map((mk) => { const s2 = mk <= cm ? monthStats(mk) : null; return { mk, s: s2, plan: plan2[mk] ? n0(plan2[mk].profit) : null }; });
+  const W = 560, H = 230, L0 = 38, R0 = 38, T0 = 14, B0 = 26, iw = W - L0 - R0, ih = H - T0 - B0;
+  const hi = niceMax(Math.max(1, ...rows.map((r) => Math.max(r.s ? r.s.rev : 0, r.plan || 0)))), lo = Math.min(0, ...rows.map((r) => (r.s ? r.s.net : 0)));
+  const y = (v) => T0 + (hi - v) / (hi - lo) * ih, band = iw / rows.length, bw2 = Math.min(18, band * 0.3);
+  const roiMax = Math.max(1, ...rows.map((r) => (r.s && r.s.roi ? r.s.roi : 0))) * 1.15, yr = (v) => T0 + (1 - v / roiMax) * ih;
+  let g = '';
+  for (let i = 0; i <= 4; i++) { const v = lo + (hi - lo) * i / 4, yy = y(v); g += `<line class="c-grid" x1="${L0}" x2="${W - R0}" y1="${yy}" y2="${yy}"/><text class="c-yt" x="${L0 - 6}" y="${yy + 3.5}" text-anchor="end">${kfmt(v)}</text><text class="c-yt" x="${W - R0 + 6}" y="${T0 + ih * (1 - i / 4) + 3.5}">${Math.round(roiMax * i / 4 * 100)}%</text>`; }
+  const pts = [];
+  const cols = rows.map((r, i) => {
+    const cx = L0 + band * i + band / 2, cur = r.mk === cm;
+    let b = '';
+    if (r.s) {
+      b += `<path class="c-bar rev${cur ? ' cur' : ''}" d="${bar(cx - bw2 - 1, y(0), bw2, y(r.s.rev))}"/><path class="c-bar${r.s.net < 0 ? ' neg' : ''}${cur ? ' cur' : ''}" d="${bar(cx + 1, y(0), bw2, y(r.s.net))}"/>`;
+      if (r.s.roi !== null) pts.push([cx, yr(r.s.roi)]);
+    }
+    const pl = r.plan !== null ? `<line class="c-plan" x1="${cx - band * 0.42}" x2="${cx + band * 0.42}" y1="${y(r.plan)}" y2="${y(r.plan)}"/>` : '';
+    const tip = r.s ? `${MONTHS[pm(r.mk).m - 1]} ${pm(r.mk).y} · ${r.s.n} ventas · ingresos ${eur(r.s.rev)} · beneficio ${eur(r.s.net, true)} · ROI ${pctTxt(r.s.roi)} · ticket ${eur(r.s.ticket)}${r.s.biz ? ' · gastos negocio ' + eur(r.s.biz) : ''}${r.plan !== null ? ' · plan ' + eur(r.plan) : ''}` : `${MONTHS[pm(r.mk).m - 1]} · plan ${eur(r.plan || 0)}`;
+    const lbl = r.s && cur ? `<text class="c-val" x="${cx + 1 + bw2 / 2}" y="${Math.min(y(r.s.net), y(0)) - 6}" text-anchor="middle">${kfmt(r.s.net)}</text>` : '';
+    return `<g class="c-col" data-tip="${esc(tip)}"><rect class="c-hit" x="${L0 + band * i}" y="${T0}" width="${band}" height="${ih}"/>${b}${pl}${lbl}<text class="c-xt${cur ? ' cur' : ''}" x="${cx}" y="${H - 8}" text-anchor="middle">${MSHORT[pm(r.mk).m - 1]}</text></g>`;
+  }).join('');
+  const roiL = pts.length > 1 ? `<path class="c-roi" d="${pts.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join('')}"/>` : '';
+  const dots = pts.map((p) => `<circle class="c-roid" cx="${p[0]}" cy="${p[1]}" r="3.2"/>`).join('');
+  return `<div class="chart"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Ingresos, beneficio y ROI por mes">${g}<line class="c-base" x1="${L0}" x2="${W - R0}" y1="${y(0)}" y2="${y(0)}"/>${cols}${roiL}${dots}</svg>
+    <div class="legend"><span><i class="lg-bar rev"></i>Ingresos</span><span><i class="lg-bar"></i>Beneficio neto</span><span><i class="lg-roi"></i>ROI (eje derecho)</span><span><i class="l2"></i>Plan</span></div></div>`;
+}
+function topWatches(mk) {
+  const ss = parts(mk).sales, by = {};
+  for (const x of ss) { const m = model(x.modelId); const k = m ? m.id : x.modelName; (by[k] = by[k] || { m, name: m ? m.name : x.modelName, n: 0, rev: 0, pr: 0 }); by[k].n++; by[k].rev += n0(x.price); by[k].pr += profitOf(x); }
+  const rows = Object.values(by).sort((a, b) => b.pr - a.pr), mx = Math.max(1, ...rows.map((r) => r.pr));
+  return panel('Por reloj este mes', rows.length ? `<div class="tw">${rows.map((r) => `<div class="tw-r click" ${r.m ? `data-a="model" data-id="${esc(r.m.id)}"` : ''}>${thumb(r.m, 36)}<div class="tw-m"><b>${esc(r.name)}</b><div class="pbar"><i style="width:${Math.max(3, r.pr / mx * 100)}%"></i></div></div><div class="tw-n"><b>${eur(r.pr)}</b><span>${r.n} v · ${eur(r.rev)}</span></div></div>`).join('')}</div>` : empty('Aún no hay ventas este mes.'));
+}
+function dataAlerts() {
+  const fix = salesToFix().length, noW = L('models').filter((m) => m.status !== 'descartado' && (n0(m.home) || n0(m.transit)) && !(n0(m.weight) > 0));
+  const items = [];
+  if (fix) items.push(`<button class="alert" data-a="orphans"><b>${fix} venta${fix === 1 ? '' : 's'} sin reloj o sin coste</b><span>toca para arreglarlas</span></button>`);
+  if (noW.length) items.push(`<button class="alert" data-a="model" data-id="${esc(noW[0].id)}"><b>Falta el peso de ${noW.length} reloj${noW.length === 1 ? '' : 'es'}</b><span>${esc(noW.map((m) => m.name).join(', '))}</span></button>`);
+  return items.length ? `<div class="alerts">${items.join('')}</div>` : '';
+}
+function viewPnl() {
+  const mk = st.month, mode = st.calMode;
+  const pb = payback(), open = L('orders').filter((o) => pb[o.id] && (o.status !== 'recibido' || pb[o.id].rev < pb[o.id].cost)).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 4);
+  const ordersP = panel('Pedidos por recuperar', open.length ? `<table class="xl list"><tbody>${open.map((o) => { const r = pb[o.id], p = r.cost ? r.rev / r.cost : 0; return `<tr class="click" data-a="order" data-id="${esc(o.id)}"><td>${shortDate(o.date)} · ${r.units} uds<span class="sub">${o.status === 'recibido' ? `${r.sold} vendidos` : 'llega ' + dShort(B.etaOf(o, brain().lead))}${n0(o.owed) ? ` · <b class="neg">debes ${eur(n0(o.owed))}</b>` : ''}</span></td><td class="n barcell">${pbar(p)}<span>${Math.round(p * 100)}% de ${eur(r.cost)}</span></td></tr>`; }).join('')}</tbody></table>` : empty('Nada por recuperar.'));
+  return `<div class="toolbar">${mnav()}<div class="seg sm"><button data-a="calmode" data-v="profit" aria-pressed="${mode === 'profit'}">Beneficio</button><button data-a="calmode" data-v="units" aria-pressed="${mode === 'units'}">Ventas</button><button data-a="calmode" data-v="cash" aria-pressed="${mode === 'cash'}">Banco</button></div>
+      <div class="tb-r"><button class="btn-g" data-a="add" data-mode="venta" data-date="${st.selDay}">+ Venta</button><button class="btn-o" data-a="add" data-mode="gasto" data-date="${st.selDay}">+ Gasto</button><button class="btn-o" data-a="export-ai">Copiar para Claude</button></div></div>
+    ${dataAlerts()}${kpis(mk)}
+    <div class="g2 pnl"><div class="col"><div class="o1">${panel(mode === 'profit' ? 'Beneficio por día' : mode === 'units' ? 'Ventas por día' : 'Banco: entra − sale por día', calGrid2(mk))}</div><div class="o4">${panel('Ingresos, beneficio y ROI por mes', monthsChart2())}</div><div class="o6">${panel('Total del mes', monthTable(mk))}</div></div>
+      <div class="col"><div class="o2">${dayPanel2()}</div><div class="o3">${insights(mk)}</div><div class="o5">${topWatches(mk)}</div><div class="o7">${ordersP}</div><div class="o8">${milestonesCard()}</div></div></div>`;
+}
+
+/* ================= Stock + money: automatic ================= */
+function nextOrderCard(pl) {
+  const o = pl.orders[0], gaps = pl.fams.filter((F) => F.gap && F.gap.days);
+  const gapTxt = gaps.length ? `<div class="gap"><b>Sin stock hasta que llegue el pedido: ${gaps.map((F) => `${esc(F.name)} ${dShort(F.gap.from)} → ${dShort(F.gap.to)} (${F.gap.days} d)`).join(' · ')}</b><span>Ya viene en camino; pedir más ahora no llegaría antes. No hace falta hacer nada.</span></div>` : '';
+  if (!o) return `<section class="panel nexto ok"><div class="hero-in"><div><span class="eyebrow">Próximo pedido</span><h2>No pidas nada</h2><p class="mut">${pl.fams.length ? 'Lo que tienes y lo que viene cubre los próximos ' + Math.min(...pl.fams.map((F) => F.coverDays)) + ' días.' : 'Aún no hay ganadores con ventas para calcular.'}</p></div></div>${gapTxt}</section>`;
+  const lines = o.split.map((p) => `<div class="ol">${thumb(p.m, 34)}<span>${esc(p.m.name)}</span><b>${p.qty} uds</b><span class="mut">${eur(p.qty * p.cost)}</span></div>`).join('');
+  const money2 = o.ok ? `<span class="pos">Caja ese día: ${eur(o.cashThen)} → te llega</span>` : `<span class="neg">Caja ese día: ${eur(o.cashThen)} → faltan ${eur(o.cost + pl.cushion - o.cashThen)}</span>${o.cashDate ? ` <span class="mut">· hay caja el ${dShort(o.cashDate)}</span>` : ''}${o.affordable ? ` <span class="mut">· o pide ${o.affordable} uds</span>` : ''}`;
+  const more = pl.orders.slice(1).map((x) => `<div class="kv"><span>${esc(x.family)} · ${x.qty} uds</span><b>${dShort(x.date)} <span class="mut">(${inDays(x.date)})</span></b></div>`).join('');
+  return `<section class="panel nexto${o.now ? ' now' : ''}"><div class="hero-in">
+      <div class="hero-l"><span class="eyebrow">Próximo pedido · ${esc(o.family)}</span><h2>${o.now ? 'Pide hoy' : dShort(o.date)} <small>${o.now ? '' : inDays(o.date)}</small></h2>
+        <p class="mut">${o.qty} uds por DDP → llegan ~${dShort(o.arrives)}. Lo que tienes y lo que viene se acaba el ${dShort(o.out)}; un pedido tarda ${pl.lead} días.</p><p>${money2}</p>
+        ${o.now ? `<button class="btn-g" data-a="plan-order2" data-v="${esc(o.family)}">Crear este pedido</button>` : ''}</div>
+      <div class="hero-r">${lines}<div class="ol tot"><span></span><span>Total</span><b>${o.qty} uds</b><b>${eur(o.cost)}</b></div></div></div>
+    ${more ? `<div class="hero-more"><span class="eyebrow">Después</span>${more}</div>` : ''}${gapTxt}</section>`;
+}
+function famCards(pl) {
+  if (!pl.fams.length) return '';
+  return `<div class="fams">${pl.fams.map((F) => {
+    const arr = F.arrivals[0];
+    return `<section class="panel fam"><div class="fam-h">${thumb(F.members[0] && F.members[0].m, 46)}<div><b>${esc(F.name)}</b><span class="mut">${F.members.length > 1 ? F.members.map((s) => `${esc(s.m.name.replace(/^watch \d\s*/i, ''))} ${s.home}`).join(' · ') : 'en casa ' + F.home}</span></div><span class="tag ${F.status === 'pide hoy' ? 'neg' : F.status === 'cubierto' ? 'pos' : 'acc'}">${esc(F.status)}</span></div>
+      <div class="fam-g"><div><b>${F.home}</b><span>en casa</span></div><div><b>${F.transit}</b><span>${arr ? 'llegan ' + dShort(arr.eta) : 'en camino'}</span></div><div><b>${rate1(F.R)}</b><span>ventas/día con stock</span></div><div><b>${F.dry ? dShort(F.dry) : '+90 d'}</b><span>se acaba</span></div></div>
+      <div class="fam-f">${F.gap && F.gap.days ? `<span class="warn">Hueco ${dShort(F.gap.from)} → ${dShort(F.gap.to)}</span> · ` : ''}${F.order && !F.order.beyond ? `Siguiente pedido <b>${dShort(F.order.date)}</b> · ${F.order.qty} uds` : esc(F.note || '')}</div></section>`;
+  }).join('')}</div>`;
+}
+function timelineChart(pl) {
+  const N = 60, days = pl.days.slice(0, N + 1), W = 620, H = 220, L0 = 34, R0 = 44, T0 = 14, B0 = 24, iw = W - L0 - R0, ih = H - T0 - B0;
+  const fams = pl.fams.filter((F) => F.sim), stockMax = Math.max(5, ...fams.map((F) => Math.max(...F.sim.stock.slice(0, N + 1))));
+  const mon = pl.money.slice(0, N + 1), mHi = Math.max(100, ...mon), mLo = Math.min(0, ...mon);
+  const x = (i) => L0 + i / N * iw, ys = (v) => T0 + (1 - v / stockMax) * ih, ym = (v) => T0 + (mHi - v) / (mHi - mLo) * ih;
+  const colors = ['f1', 'f2', 'f3', 'f4'];
+  let g = '';
+  for (let i = 0; i <= 4; i++) { const yy = T0 + ih * i / 4; g += `<line class="c-grid" x1="${L0}" x2="${W - R0}" y1="${yy}" y2="${yy}"/><text class="c-yt" x="${L0 - 6}" y="${yy + 3.5}" text-anchor="end">${Math.round(stockMax * (1 - i / 4))}</text><text class="c-yt" x="${W - R0 + 6}" y="${yy + 3.5}">${kfmt(mHi - (mHi - mLo) * i / 4)}</text>`; }
+  const areas = fams.map((F, fi) => `<path class="c-st ${colors[fi % 4]}" d="M${x(0)} ${ys(0)}${F.sim.stock.slice(0, N + 1).map((v, i) => `L${x(i).toFixed(1)} ${ys(v).toFixed(1)}`).join('')}L${x(N)} ${ys(0)}Z"/>`).join('');
+  const line = `<path class="c-cash" d="${mon.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)} ${ym(v).toFixed(1)}`).join('')}"/>`;
+  const zero = mLo < 0 ? `<line class="c-zero" x1="${L0}" x2="${W - R0}" y1="${ym(0)}" y2="${ym(0)}"/>` : '';
+  const evs = [];
+  for (const F of fams) for (const a of F.arrivals) { const i = B.diffD(todayKey(), a.eta); if (i >= 0 && i <= N) evs.push({ i, cls: 'arr', tip: `${a.eta}: llegan ${a.qty} de ${F.name}` }); }
+  for (const o of pl.orders) { const i = B.diffD(todayKey(), o.date); if (i >= 0 && i <= N) evs.push({ i, cls: 'ord', tip: `${o.date}: pedir ${o.qty} de ${o.family} (${eur(o.cost)})` }); }
+  const marks = evs.map((e) => `<g class="c-col" data-tip="${esc(e.tip)}"><line class="c-ev ${e.cls}" x1="${x(e.i)}" x2="${x(e.i)}" y1="${T0}" y2="${T0 + ih}"/><circle class="c-evd ${e.cls}" cx="${x(e.i)}" cy="${T0 + 4}" r="4.5"/></g>`).join('');
+  const hits = days.map((k, i) => { const tip = `${dShort(k)} · caja ${eur(mon[i])} · ${fams.map((F) => `${F.name} ${Math.round(F.sim.stock[i])}`).join(' · ')}`; return `<rect class="c-hit" data-tip="${esc(tip)}" x="${x(i) - iw / N / 2}" y="${T0}" width="${iw / N}" height="${ih}"/>`; }).join('');
+  const xt = [0, 15, 30, 45, 60].map((i) => `<text class="c-xt" x="${x(i)}" y="${H - 7}" text-anchor="middle">${dShort(days[i])}</text>`).join('');
+  return `<div class="chart"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Stock y caja de los próximos 60 días">${g}${areas}${zero}${line}${marks}<g class="c-col">${hits}</g>${xt}</svg>
+    <div class="legend">${fams.map((F, fi) => `<span><i class="sw ${colors[fi % 4]}"></i>${esc(F.name)} (uds)</span>`).join('')}<span><i class="lg-cash"></i>Tu dinero (banco + Vinted, eje derecho)</span><span><i class="sw arr"></i>llega pedido</span><span><i class="sw ord"></i>pedir</span></div></div>`;
+}
+function cashPanel(pl) {
+  return panel('Caja', cajaTable() + `<div class="ins" style="padding-top:0">${`<div class="kv"><span class="mut">En 30 días (con ventas, pagos y pedidos)</span><b class="${pl.in30 < 0 ? 'neg' : ''}">${eur(pl.in30)}</b></div><div class="kv"><span class="mut">Punto más bajo</span><b class="${pl.low.amount < pl.cushion ? 'neg' : ''}">${eur(pl.low.amount)} · ${dShort(pl.low.date)}</b></div>`}</div>`, '<button class="lnk" data-a="settings">Ajustar</button>');
+}
+function modelCards() {
+  const f = st.filter, ms = L('models').slice().sort((a, b) => (SORDER[(stockOf(a.id) || { m: a }).m.status] ?? 9) - (SORDER[(stockOf(b.id) || { m: b }).m.status] ?? 9) || n0(b.home) + n0(b.transit) - n0(a.home) - n0(a.transit) || String(a.name).localeCompare(b.name));
+  const shown = ms.filter((m) => { const e = (stockOf(m.id) || { m }).m.status; return f === 'todos' ? true : f === 'activos' ? e !== 'descartado' : e === f; });
+  const chips = [['activos', 'Activos'], ['ganador', 'Ganadores'], ['test', 'Test'], ['descartado', 'Archivados'], ['todos', 'Todos']].map(([v, l]) => `<button class="chip" data-a="filter" data-v="${v}" aria-pressed="${f === v}">${l}</button>`).join('');
+  return panel('Relojes', `<div class="filters">${chips}</div><div class="mcards">${shown.map((m) => {
+    const r = stockOf(m.id), e = r ? r.m.status : m.status, n = L('sales').filter((v) => v.modelId === m.id && !v.cancelled).length, src = costSrc(m);
+    return `<button class="mcard${e === 'descartado' ? ' off' : ''}" data-a="model" data-id="${esc(m.id)}">${thumb(m, 54)}<div class="mc-b"><b>${esc(m.name)}</b><span class="st-${STATUS[e] ? e : 'test'}">${STATUS[e] || 'Test'}</span>
+      <div class="mc-g"><span><b>${n0(m.home)}</b> casa</span><span><b>${n0(m.transit)}</b> camino</span><span><b>${n}</b> vendidos</span></div>
+      <div class="mc-c">${src === 'por defecto' ? '<span class="neg">coste FALTA</span>' : `coste ${eur(costOf(m))} <span class="mut">${src.startsWith('real') ? 'real' : src.startsWith('estimado') ? 'estimado' : 'a mano'}</span>`}${r && r.nCost ? ` · <span class="pos">${eur(r.unitProfit)}/venta</span>` : ''}</div></div></button>`;
+  }).join('') || empty('No hay relojes en este filtro.')}</div>`, '<button class="lnk" data-a="model">+ Reloj</button>');
+}
+function ordersPanel() {
+  const pb = payback(), bz = brain(), os = L('orders').filter((o) => pb[o.id]).sort((a, b) => b.date.localeCompare(a.date));
+  return panel('Pedidos', os.length ? `<table class="xl list"><thead><tr><th>Pedido</th><th class="n">Uds</th><th class="n">Coste</th><th class="n">Recuperado</th></tr></thead><tbody>${os.map((o) => {
+    const r = pb[o.id], p = r.cost ? r.rev / r.cost : 0, eta = o.status !== 'recibido' ? B.etaOf(o, bz.lead) : '';
+    return `<tr class="click" data-a="order" data-id="${esc(o.id)}"><td>${shortDate(o.date)} <span class="sub ${o.status === 'recibido' ? '' : 'warn'}">${LANE[o.lane || 'ddp']} · ${o.status === 'recibido' ? 'recibido' : 'llega ~' + shortDate(eta)}${n0(o.owed) ? ` · <b class="neg">debes ${eur(n0(o.owed))}</b>` : ''}</span></td><td class="n">${r.units}</td><td class="n">${eur(r.cost)}</td><td class="n barcell">${pbar(p)}<span>${Math.round(p * 100)}%</span></td></tr>`;
+  }).join('')}</tbody></table>` : empty('Aún no hay pedidos.'), '<button class="lnk" data-a="add" data-mode="pedido">+ Pedido</button>');
+}
+function viewStock2() {
+  const pl = plan();
+  const sumHome = sum(L('models').map((m) => n0(m.home))), sumTr = sum(L('models').map((m) => n0(m.transit))), val = sum(L('models').filter((m) => m.status !== 'descartado').map((m) => n0(m.home) * costOf(m)));
+  return `<div class="toolbar"><div class="ttl">Stock y caja</div><div class="tb-r"><span class="mut sm2">${sumHome} en casa · ${sumTr} en camino · ${eur(val)} en stock · bolsitas ${pouches()}</span><button class="btn-o" data-a="catchup">Contar stock</button><button class="btn-g" data-a="add" data-mode="pedido">+ Pedido</button></div></div>
+    ${nextOrderCard(pl)}${famCards(pl)}
+    <div class="g2"><div class="col">${panel('Stock y dinero · próximos 60 días', timelineChart(pl), `pedido tarda ${pl.lead} d`)}${modelCards()}</div><div class="col">${cashPanel(pl)}${ordersPanel()}</div></div>`;
 }
 
 /* ---------------- manager (AI) ---------------- */
@@ -844,18 +1084,19 @@ function sheetHTML() {
   if (kind === 'receive') {
     const o = db.get(C.orders, ctx.id) || {};
     return head('PEDIDO RECIBIDO') + `<div class="hint">Pedido del ${shortDate(o.date)} · ${(o.lines || []).reduce((a, l) => a + n0(l.qty), 0)} relojes. Los relojes pasan de "en camino" a "en casa".</div>
-      <div class="fields2">${fld('r-dhl', 'Cobro de DHL al llegar (€)', ctx.dhl || '', 'inputmode="decimal" placeholder="0"')}${dateFld('r-date', ctx.date)}</div>
+      <div class="fields2">${fld('r-dhl', 'Impuestos pagados al llegar (DUA, €)', ctx.dhl || '', 'inputmode="decimal" placeholder="0 si es DDP"')}${dateFld('r-date', ctx.date)}</div>
       <div class="preview" id="r-prev"></div><div class="err" id="sh-err"></div><button class="primary" data-a="save-receive">Guardar</button>`;
   }
   if (kind === 'model') {
     const m = ctx.id ? model(ctx.id) || {} : { status: 'test', home: 0, transit: 0 };
-    return head(ctx.id ? 'EDITAR RELOJ' : 'NUEVO RELOJ') + fld('m-name', 'Nombre', m.name, 'autocomplete="off"') +
+    const ph = ctx.photo !== undefined ? ctx.photo : m.photo;
+    return head(ctx.id ? 'EDITAR RELOJ' : 'NUEVO RELOJ') + `<div class="photo-ed">${ph ? `<img src="${ph}" alt="">` : `<span class="thumb ph" style="width:84px;height:84px">foto</span>`}<div class="stack" style="gap:6px"><label class="btn-o filebtn">${ph ? 'Cambiar foto' : 'Añadir foto'}<input type="file" accept="image/*" id="m-photo" hidden></label>${ph ? '<button class="ghost" data-a="photo-rm">Quitar foto</button>' : ''}</div></div>` + fld('m-name', 'Nombre', m.name, 'autocomplete="off"') + fld('m-fam', 'Familia (mismo reloj en otro color)', m.family || P.familyOf({ ...m, family: null, name: m.name || '' }) , 'autocomplete="off" placeholder="Ej. Watch 1"') +
       `<div class="field"><label for="m-status">Estado</label><select id="m-status">${Object.keys(STATUS).map((k) => `<option value="${k}"${m.status === k ? ' selected' : ''}>${STATUS[k]}</option>`).join('')}</select></div>
       <div class="fields2">${fld('m-landed', 'Coste puesto (€)', m.landed)}${fld('m-list', 'Precio de venta (€)', m.listPrice)}</div>
       <div class="fields2">${fld('m-min', 'Precio mínimo (€)', m.minPrice)}${fld('m-unit', '€/ud en 1688', m.unitPrice)}</div>
       <div class="fields2">${fld('m-home', 'En casa', m.home || 0, 'inputmode="numeric"')}${fld('m-transit', 'En camino', m.transit || 0, 'inputmode="numeric"')}</div>
       <div class="fields2">${fld('m-w', 'Peso con bolsa (g)', m.weight, 'inputmode="numeric"')}<div></div></div>
-      <div class="hint">Coste puesto = precio 1688 + envío + DHL/IVA, por unidad. Se calcula solo con los pedidos: el envío se reparte por peso (por eso hace falta el peso). ${ctx.id ? `Ahora: <b>${costSrc(m)}</b>.` : ''} Ganador solo con prueba: 1 venta o 2 ofertas; si no, se guarda como Test.</div><div class="err" id="sh-err"></div>
+      <div class="hint">Coste puesto = precio 1688 + envío + impuestos (DUA), por unidad. Se calcula solo con los pedidos: el envío se reparte por peso (por eso hace falta el peso). ${ctx.id ? `Ahora: <b>${costSrc(m)}</b>.` : ''} Ganador solo con prueba: 1 venta o 2 ofertas; si no, se guarda como Test.</div><div class="err" id="sh-err"></div>
       <button class="primary" data-a="save-model">Guardar</button>${ctx.id ? modelAnalysis(ctx.id) + mergeBlock(ctx.id) : ''}${ctx.id ? `<button class="danger" data-a="del-model">${st.confirm === 'models/' + ctx.id ? 'Pulsa otra vez para borrar' : 'Borrar reloj'}</button>` : ''}`;
   }
   if (kind === 'settings') {
@@ -870,7 +1111,7 @@ function sheetHTML() {
       ${fld('s-acc', 'Cuentas de venta (separadas por comas)', (s.accounts || []).join(', '), 'autocomplete="off"')}
       <div class="fields2">${fld('s-pend', 'Días que Vinted retiene el dinero', pendingDays(), 'inputmode="numeric"')}${fld('s-bench', 'Tests a la vez', n0(s.testBench) || B.FALLBACK.bench, 'inputmode="numeric"')}</div>
       <div class="fields2">${fld('s-maxacc', 'Máx. cuentas por reloj', n0(s.maxAccPerModel) || B.FALLBACK.maxAccPerModel, 'inputmode="numeric"')}${fld('s-cycle', 'Un DDP cubre (días de ventas)', n0(s.cycleDays) || B.FALLBACK.cycleDays, 'inputmode="numeric"')}</div>
-      <div class="fields2">${fld('s-ldhl', 'DHL tarda (días, hasta medirlo)', n0(s.leadDHL) || B.FALLBACK.leadDHL, 'inputmode="numeric"')}${fld('s-lddp', 'DDP tarda (días, hasta medirlo)', n0(s.leadDDP) || B.FALLBACK.leadDDP, 'inputmode="numeric"')}</div>
+      <div class="fields2">${fld('s-lddp', 'Un pedido tarda (días, hasta medirlo)', n0(s.leadDDP) || B.FALLBACK.leadDDP, 'inputmode="numeric"')}<div></div></div>
       <div class="hint">Los plazos se miden solos con tus pedidos recibidos; estos números solo se usan hasta entonces.</div>
       <div class="err" id="sh-err"></div><button class="primary" data-a="save-settings">Guardar</button>
       <button class="ghost" data-a="theme" style="justify-self:start">${document.documentElement.dataset.theme === 'dark' ? 'Usar tema claro' : 'Usar tema oscuro'}</button>
@@ -906,11 +1147,9 @@ function sheetHTML() {
     <div class="hint">Las claves quedan cifradas en GitHub; nadie las ve, ni en el repo público. Desde ahí funciona solo cada hora.</div>`;
   if (kind === 'catchup') {
     const ms = sortedModels().filter((m) => m.status !== 'descartado'), accs = acctNames();
-    return head('PONERME AL DÍA') + `<div class="hint">Lo que la app no sabe. Rellena solo lo que cambia; lo vacío se queda igual. "Vendidos" = los de los últimos 14 días que NO apuntaste (solo para calcular ritmo, no cuentan como ventas en la caja).</div>
-      ${ms.map((m) => { const lv = liveOf(m.id).map((l) => l.account); return `<div class="cu"><b>${esc(m.name)}</b><span class="sub">${STATUS[m.status] || ''}${lv.length ? ' · publicado en ' + esc(lv.join(', ')) : ''}</span>
-        <div class="fields3">${fld('cu-h-' + m.id, 'En casa', n0(m.home), 'inputmode="numeric"')}${fld('cu-s-' + m.id, 'Vendidos 14 días', m.baseAt && m.baseAt >= shiftDay(todayKey(), -13) ? n0(m.base14) : '', 'inputmode="numeric" placeholder="0"')}
-        <div class="field"><label for="cu-a-${m.id}">Publicado en</label><select id="cu-a-${esc(m.id)}"><option value="">${lv.length ? 'ya apuntado' : 'no / no sé'}</option>${accs.filter((a) => !lv.includes(a)).map((a) => `<option>${esc(a)}</option>`).join('')}</select></div></div></div>`; }).join('')}
-      ${(() => { const arc = sortedModels().filter((m) => m.status === 'descartado' && !/sin especificar/i.test(m.name)); return arc.length ? `<div class="eyebrow">Archivados (ya no los vendes)</div><div class="hint">Si te queda alguno en casa, pon cuántos: sale como "liquidar".</div>${arc.map((m) => `<div class="cu"><b>${esc(m.name)}</b><span class="sub">${L('sales').filter((v) => v.modelId === m.id).length} ventas en total</span><div class="fields3">${fld('cu-h-' + m.id, 'En casa', n0(m.home), 'inputmode="numeric"')}</div></div>`).join('')}` : ''; })()}
+    return head('CONTAR STOCK') + `<div class="hint">Cuántos tienes en casa de cada uno. Solo cambia lo que no cuadre.</div>
+      <div class="cugrid">${ms.map((m) => `<div class="cu">${thumb(m, 40)}<b>${esc(m.name)}</b>${fld('cu-h-' + m.id, 'En casa', n0(m.home), 'inputmode="numeric"')}</div>`).join('')}</div>
+      ${(() => { const arc = sortedModels().filter((m) => m.status === 'descartado' && !/sin especificar/i.test(m.name)); return arc.length ? `<div class="eyebrow">Archivados (ya no los vendes)</div><div class="hint">Si te queda alguno en casa, pon cuántos: sale como "liquidar".</div><div class="cugrid">${arc.map((m) => `<div class="cu">${thumb(m, 40)}<b>${esc(m.name)}</b>${fld('cu-h-' + m.id, 'En casa', n0(m.home), 'inputmode="numeric"')}</div>`).join('')}</div>` : ''; })()}
       <div class="err" id="sh-err"></div><button class="primary" data-a="save-catchup">Guardar</button>`;
   }
   if (kind === 'orphans') {
@@ -993,7 +1232,7 @@ function saleBody(ctx) {
   if (!ms.length) return '<div class="empty">Primero crea un reloj en <b>Stock → + Reloj</b>.</div>';
   return `<div class="field"><label for="f-model">Reloj</label><select id="f-model">${ms.map((m) => `<option value="${esc(m.id)}"${m.id === pre ? ' selected' : ''}>${esc(m.name)} · ${n0(m.home)} en casa</option>`).join('')}</select></div>
     <div class="fields2">${fld('f-price', 'Vendido a (€)', '', 'inputmode="decimal" placeholder="30"')}${fld('f-cost', 'Coste del reloj (€)', '')}</div>
-    <div class="hint" id="f-esthint"></div>
+    <div id="f-photo" class="f-photo"></div><div class="hint" id="f-esthint"></div>
     <label class="check"><input type="checkbox" id="f-pouch"${lsGet('lg_pouch', '1') === '1' ? ' checked' : ''}> Va con bolsita (${eur(pouchCost())} · quedan ${pouches()})</label>
     <div class="fields2">${dateFld('f-date', ctx.date)}<div class="field"><label for="f-acc">Cuenta</label><select id="f-acc">${accs.map((a) => `<option>${esc(a)}</option>`).join('')}</select></div></div>
     <label class="check"><input type="checkbox" id="f-dec" checked> Restar 1 del stock en casa</label>
@@ -1015,11 +1254,11 @@ function orderForm(ctx) {
       ${l.modelId === '__new' ? `<input id="l-n-${i}" style="background:var(--surface-2);border:1px solid var(--line);border-radius:11px;padding:10px 12px;font-size:15px" placeholder="Nombre del reloj nuevo" value="${esc(l.name)}" autocomplete="off">` : ''}</div>`).join('');
   return `${lines}<div><button class="ghost" data-a="addline">+ Otra línea</button></div>
     <div class="fields2">${fld('o-pq', 'Bolsitas (uds)', ctx.pq || '', 'inputmode="numeric" placeholder="0"')}${fld('o-pu', '€/bolsita en 1688', ctx.pu || '', 'inputmode="decimal" placeholder="0,30"')}</div>
-    <div class="fields2"><div class="field"><label for="o-lane">Vía</label><select id="o-lane">${[['dhl', 'DHL (rápido, IVA al llegar)'], ['ddp', 'DDP (barato, impuestos incluidos)']].map(([v, l]) => `<option value="${v}"${(ctx.lane || 'ddp') === v ? ' selected' : ''}>${l}</option>`).join('')}</select></div>${fld('o-ship', 'Envío del agente (€)', ctx.ship || '', 'inputmode="decimal" placeholder="70"')}</div>
+    <div class="fields2"><div class="field"><label for="o-lane">Vía</label><select id="o-lane">${[['ddp', 'DDP (impuestos incluidos)'], ['dua', 'DUA (impuestos al llegar)']].map(([v, l]) => `<option value="${v}"${((ctx.lane === 'dhl' ? 'dua' : ctx.lane) || 'ddp') === v ? ' selected' : ''}>${l}</option>`).join('')}</select></div>${fld('o-ship', 'Envío del agente (€)', ctx.ship || '', 'inputmode="decimal" placeholder="70"')}</div>
     <div class="fields2">${fld('o-owed', 'Queda por pagar (€)', ctx.owed || '', 'inputmode="decimal" placeholder="0"')}${dateFld('o-date', ctx.date)}</div>
-    ${fld('o-note', 'Nota (opcional)', ctx.note || '', 'autocomplete="off" placeholder="Ej. caja DHL 4 kg"')}
+    ${fld('o-note', 'Nota (opcional)', ctx.note || '', 'autocomplete="off" placeholder="Ej. caja de 3 kg"')}
     <div class="preview" id="o-prev"></div>
-    <div class="hint">Lo que pagas hoy (relojes + envío) sale de la caja ya. El cobro de DHL lo apuntas al recibirlo.</div>
+    <div class="hint">Lo que pagas hoy (relojes + envío) sale de la caja ya. Si es DUA, los impuestos los apuntas al recibirlo.</div>
     <div class="err" id="sh-err"></div><button class="primary" data-a="save-order">Guardar pedido</button>`;
 }
 function spendBody(ctx) {
@@ -1068,7 +1307,7 @@ function modelAnalysis(id) {
     ${r.rate ? tr('Con lo que viene', days1(r.coverAll) + ' días') : ''}
     ${arr ? tr('En camino', arr) : ''}
     ${r.rate ? tr('Pedir cuando queden', Math.ceil(r.rop) + ' uds <span class="sub" style="display:inline">· colchón ' + r.safety + '</span>') : ''}
-    ${r.qty ? tr('Pedir ahora', `<b>${r.bridge ? `DHL ${r.bridge}` : ''}${r.bridge && r.ddpQty ? ' + ' : ''}${r.ddpQty ? `DDP ${r.ddpQty}` : ''}</b>`, 'tot') : ''}
+
     ${tr('Beneficio por venta', money(r.unitProfit, true))}
     ${r.rate ? tr('Beneficio por día', money(r.profitDay, true)) : ''}
     ${r.home ? tr('Dinero en stock', eur(r.capital)) : ''}
@@ -1105,10 +1344,10 @@ function landedFromOrder(o) {
   const lines = (o.lines || []).map((l) => ({ modelId: l.modelId, qty: n0(l.qty), unit: n0(l.unit) }));
   if (!lines.length || lines.some((l) => !(l.unit > 0) || !(l.qty > 0))) return null;
   const rec = o.status === 'recibido', pq = o.pouches ? n0(o.pouches.qty) : 0, pu = o.pouches ? n0(o.pouches.unit) : 0;
-  const al = allocLanded(lines, pq, pu, n0(o.shipping), rec ? n0(o.dhl) : 0, !rec && o.lane === 'dhl');
+  const al = allocLanded(lines, pq, pu, n0(o.shipping), rec ? n0(o.dhl) : 0, !rec && isDua(o));
   const kinds = new Set(lines.map((l) => l.modelId)).size;
   // real = nothing left to pay on arrival (DDP, or received) and shipping split by weight (or only one watch in the box)
-  al.src = (rec || o.lane !== 'dhl') && (al.byW || kinds === 1) ? 'real' : 'estimado';
+  al.src = (rec || !isDua(o)) && (al.byW || kinds === 1) ? 'real' : 'estimado';
   return al;
 }
 async function recalcOrder(o) {
@@ -1131,9 +1370,9 @@ function orderPreview() {
   const lines = readLines(), ship = n0(sv('o-ship')), pq = n0(sv('o-pq')), pu = n0(sv('o-pu')), pg = pq * pu, lane = sv('o-lane'), owed = n0(sv('o-owed'));
   const ls = lines.filter((l) => n0(l.qty) && n0(l.unit)).map((l) => ({ modelId: l.modelId, qty: n0(l.qty), unit: n0(l.unit), w: n0(l.w), name: l.name }));
   const wgoods = sum(ls.map((l) => l.qty * l.unit)), goods = wgoods + pg, units = sum(lines.map((l) => n0(l.qty)));
-  const al = allocLanded(ls, pq, pu, ship, 0, lane === 'dhl'), now = goods + ship - owed, iva = lane === 'dhl' ? 0.21 * (goods + ship) : 0;
+  const al = allocLanded(ls, pq, pu, ship, 0, lane === 'dua'), now = goods + ship - owed, iva = lane === 'dua' ? 0.21 * (goods + ship) : 0;
   box.innerHTML = `<div class="kv"><span class="mut">Relojes</span><b>${units} uds · ${eur(wgoods)}</b></div>${pg ? `<div class="kv"><span class="mut">Bolsitas</span><b>${pq} uds · ${eur(pg)}</b></div>` : ''}${al.byW ? `<div class="kv"><span class="mut">Peso de la caja</span><b>${(al.kg + 0.4).toFixed(2).replace('.', ',')} kg aprox.</b></div>` : ''}
-    <div class="kv"><span class="mut">Pagas hoy</span><b class="neg">${eur(now)}</b></div>${owed ? `<div class="kv"><span class="mut">Debes después</span><b class="neg">${eur(owed)}</b></div>` : ''}${iva ? `<div class="kv"><span class="mut">Al llegar: IVA 21% + gestión DHL</span><b class="warn">≈ ${eur(iva)} + gestión</b></div>` : ''}
+    <div class="kv"><span class="mut">Pagas hoy</span><b class="neg">${eur(now)}</b></div>${owed ? `<div class="kv"><span class="mut">Debes después</span><b class="neg">${eur(owed)}</b></div>` : ''}${iva ? `<div class="kv"><span class="mut">Al llegar: IVA 21% + gestión (DUA)</span><b class="warn">≈ ${eur(iva)} + gestión</b></div>` : ''}
     <div class="kv"><span class="mut">Banco después</span><b class="${bankNow() - now < 0 ? 'neg' : ''}">${eur(bankNow() - now)}</b></div>
     ${ls.map((l) => { const m = model(l.modelId), p = al.per[l.modelId]; return p ? `<div class="kv"><span class="mut">Coste/ud ${esc(m ? m.name : l.name || 'nuevo')}${al.byW ? '' : ' (sin peso: envío por valor)'}</span><b>≈ ${eur(p.landed)}</b></div>` : ''; }).join('')}`;
 }
@@ -1151,6 +1390,7 @@ function afterSheet() {
       c.value = m && !isNaN(num(m.landed)) ? String(num(m.landed)).replace('.', ',') : '';
       $('#f-esthint', sheetEl).textContent = !m || isNaN(num(m.landed)) ? 'Este reloj no tiene coste: pon el real (1688 + envío). Sin coste no se calcula el beneficio.' : m.landedSrc === 'estimado' ? 'Coste estimado del pedido (falta peso o DHL). Cámbialo si sabes el real.' : '';
       $('#f-dec', sheetEl).checked = !!m && n0(m.home) > 0; prev();
+      const fp = $('#f-photo', sheetEl); if (fp) fp.innerHTML = m ? `${thumb(m, 64)}<span><b>${esc(m.name)}</b><span class="mut">${n0(m.home)} en casa${n0(m.transit) ? ' · ' + n0(m.transit) + ' en camino' : ''}</span></span>` : '';
     };
     sel.addEventListener('change', sync_);
     $('#f-price', sheetEl).addEventListener('input', prev); $('#f-cost', sheetEl).addEventListener('input', prev); $('#f-pouch', sheetEl).addEventListener('change', prev);
@@ -1171,6 +1411,8 @@ function afterSheet() {
     };
     sheetEl.querySelector('#r-dhl').addEventListener('input', up); up();
   }
+  const mp = sheetEl.querySelector('#m-photo');
+  if (mp) mp.addEventListener('change', async () => { const f = mp.files && mp.files[0]; if (!f) return; try { st.sheet.ctx.photo = await photoData(f); redrawSheet(); } catch { toast('No se pudo leer la foto'); } });
   const it = sheetEl.querySelector('#imp-txt');
   if (it) {
     const up = () => { st.sheet.ctx.txt = it.value; $('#imp-prev', sheetEl).innerHTML = importPreview(it.value); labelTables(sheetEl); };
@@ -1185,6 +1427,14 @@ function afterSheet() {
 }
 
 /* ---------------- writes ---------------- */
+// a small square JPEG (stored with the watch and synced; ~20 KB)
+function photoData(file) {
+  return new Promise((res, rej) => {
+    const img = new Image(), url = URL.createObjectURL(file);
+    img.onload = () => { const S = 320, c = document.createElement('canvas'), k = Math.min(img.width, img.height); c.width = c.height = S; c.getContext('2d').drawImage(img, (img.width - k) / 2, (img.height - k) / 2, k, k, 0, 0, S, S); URL.revokeObjectURL(url); res(c.toDataURL('image/jpeg', 0.72)); };
+    img.onerror = rej; img.src = url;
+  });
+}
 function toast(t) { toastEl.textContent = t; toastEl.hidden = false; clearTimeout(toast._t); toast._t = setTimeout(() => { toastEl.hidden = true; }, 2000); }
 const validDate = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d);
 async function saveSale() {
@@ -1230,8 +1480,8 @@ async function saveOrder() {
     const m = model(mid);
     out.push({ modelId: mid, name: m ? m.name : l.name, qty: parseInt(l.qty, 10), unit: r2(num(l.unit)) });
   }
-  const goods = r2(sum(out.map((l) => l.qty * l.unit)) + (pq ? pq * pu : 0)), sh = isNaN(ship) ? 0 : r2(ship), lane = sv('o-lane') === 'dhl' ? 'dhl' : 'ddp';
-  const owed = Math.min(goods + sh, Math.max(0, r2(n0(sv('o-owed'))))), al = allocLanded(out, pq, pq ? pu : 0, sh, 0, lane === 'dhl');
+  const goods = r2(sum(out.map((l) => l.qty * l.unit)) + (pq ? pq * pu : 0)), sh = isNaN(ship) ? 0 : r2(ship), lane = sv('o-lane') === 'dua' ? 'dua' : 'ddp';
+  const owed = Math.min(goods + sh, Math.max(0, r2(n0(sv('o-owed'))))), al = allocLanded(out, pq, pq ? pu : 0, sh, 0, lane === 'dua');
   const o = await db.put(C.orders, { date, at: nowISO(), note: sv('o-note'), lane, lines: out, pouches: pq ? { qty: pq, unit: r2(pu) } : null, goods, shipping: sh, paid: r2(goods + sh - owed), owed: r2(owed), payments: [], dhl: 0, status: 'camino' });
   const lf = landedFromOrder(o);
   for (const id in al.per) { const m = model(id); const l = out.find((z) => z.modelId === id); await db.patch(C.models, id, { transit: n0(m && m.transit) + al.per[id].qty, landed: al.per[id].landed, landedSrc: lf ? lf.src : 'estimado', landedOrder: o.id, unitPrice: l.unit }); }
@@ -1267,7 +1517,8 @@ async function saveModel() {
   const id = st.sheet.ctx.id, name = sv('m-name');
   if (!name) return shErr('Ponle un nombre.');
   const opt = (v) => { const x = num(v); return isNaN(x) ? null : r2(x); };
-  const data = { name, status: sv('m-status'), landed: opt(sv('m-landed')), listPrice: opt(sv('m-list')), minPrice: opt(sv('m-min')), unitPrice: opt(sv('m-unit')), weight: opt(sv('m-w')), home: Math.max(0, Math.round(n0(sv('m-home')))), transit: Math.max(0, Math.round(n0(sv('m-transit')))) };
+  const ctxp = st.sheet.ctx.photo;
+  const data = { name, family: sv('m-fam') || null, ...(ctxp !== undefined ? { photo: ctxp } : {}), status: sv('m-status'), landed: opt(sv('m-landed')), listPrice: opt(sv('m-list')), minPrice: opt(sv('m-min')), unitPrice: opt(sv('m-unit')), weight: opt(sv('m-w')), home: Math.max(0, Math.round(n0(sv('m-home')))), transit: Math.max(0, Math.round(n0(sv('m-transit')))) };
   const old = id ? model(id) || {} : {};
   let note = 'Guardado';
   if (data.status === 'ganador' && old.status !== 'ganador' && !B.proofOf({ ...old, id }, L('sales').filter((x) => !x.cancelled), L('listings')).ok) { data.status = 'test'; note = 'Guardado como Test: ganador con 1 venta o 2 ofertas'; }
@@ -1289,7 +1540,7 @@ async function saveSettings() {
   const dc = num(sv('s-defcost')), pc = num(sv('s-pouchcost')), pq = num(sv('s-pouches'));
   const cur = S0(), patch = { cushion: isNaN(cush) ? 0 : r2(cush), monthlyGoal: r2(g), defaultCost: isNaN(dc) ? 10 : r2(dc), pouchCost: isNaN(pc) ? 0 : r2(pc), pouches: isNaN(pq) ? 0 : Math.max(0, Math.round(pq)), accounts: accs.length ? accs : cur.accounts };
   const int = (id, d) => { const v = Math.round(num(sv(id))); return isNaN(v) || v <= 0 ? d : v; };
-  Object.assign(patch, { pendingDays: int('s-pend', B.FALLBACK.pendingDays), testBench: int('s-bench', B.FALLBACK.bench), maxAccPerModel: int('s-maxacc', B.FALLBACK.maxAccPerModel), cycleDays: int('s-cycle', B.FALLBACK.cycleDays), leadDHL: int('s-ldhl', B.FALLBACK.leadDHL), leadDDP: int('s-lddp', B.FALLBACK.leadDDP) });
+  Object.assign(patch, { pendingDays: int('s-pend', B.FALLBACK.pendingDays), testBench: int('s-bench', B.FALLBACK.bench), maxAccPerModel: int('s-maxacc', B.FALLBACK.maxAccPerModel), cycleDays: int('s-cycle', B.FALLBACK.cycleDays), leadDDP: int('s-lddp', B.FALLBACK.leadDDP) });
   if (r2(cash) !== r2(bankNow())) { patch.cash = r2(cash); patch.cashAt = nowISO(); }
   const vb = {}; let vChanged = false;
   for (const a of acctNames()) { const v = num(sv('s-vb-' + a.replace(/\W/g, '_'))); vb[a] = isNaN(v) ? r2(vintedBalance(a)) : r2(v); if (vb[a] !== r2(vintedBalance(a))) vChanged = true; }
@@ -1362,7 +1613,7 @@ async function saveCatchup() {
     if (Object.keys(p).length) await db.patch(C.models, m.id, p);
     if (a) await db.put(C.listings, { modelId: m.id, account: a, price: n0(m.listPrice) || 34.95, listedAt: nowISO(), status: 'live', snaps: [] });
   }
-  closeSheet(); toast('Al día · los cálculos ya usan tus números reales');
+  closeSheet(); toast('Stock guardado');
 }
 async function saveSnap() {
   const id = sv('t-l'), l = db.get(C.listings, id); if (!l) return shErr('Elige el anuncio.');
@@ -1503,6 +1754,7 @@ document.addEventListener('click', async (e) => {
     }
     case 'settings': openSheet('settings'); break;
     case 'import': openSheet('import', {}); break;
+    case 'photo-rm': st.sheet.ctx.photo = null; redrawSheet(); break;
     case 'orphans': openSheet('orphans', {}); break;
     case 'save-import': {
       const btn = b; btn.disabled = true; const res = await runImport(sv('imp-txt'), sv('imp-acc'), sv('imp-pct'));
@@ -1544,13 +1796,14 @@ document.addEventListener('click', async (e) => {
     case 'planedit': openSheet('planedit', {}); break;
     case 'plan-addmonth': { const pl = readPlan(), ks = Object.keys(pl).sort(), last = ks[ks.length - 1] || shiftMonth(curMonth(), -1); pl[shiftMonth(last, 1)] = { ...(pl[last] || { sales: 0, min: 0, profit: 0 }) }; st.sheet.ctx.plan = pl; redrawSheet(); break; }
     case 'plan-order': { const ls = brain().plan.lines.filter((l) => l.lane === v); openOrderFor(ls.map((l) => ({ modelId: l.m.id, qty: l.qty })), v); break; }
-    case 'order-model': { const r = stockOf(b.dataset.id); if (r) openOrderFor([{ modelId: r.m.id, qty: r.bridge || r.ddpQty || 10 }], r.bridge ? 'dhl' : 'ddp'); break; }
+    case 'plan-order2': { const o = plan().orders.find((z) => z.family === v); if (o) openOrderFor(o.split.map((p) => ({ modelId: p.m.id, qty: p.qty })), 'ddp'); break; }
+    case 'order-model': { const r = stockOf(b.dataset.id); if (r) openOrderFor([{ modelId: r.m.id, qty: r.ddpQty || 10 }], 'ddp'); break; }
     case 'test-win': {
       const t = brain().tests.find((z) => z.m.id === b.dataset.id); if (!t) break;
       if (t.stage !== 'ganador' && !B.proofOf(t.m, L('sales').filter((x) => !x.cancelled), L('listings')).ok) { toast('Aún no: ganador = 1 venta o 2 ofertas'); break; }
       await db.patch(C.models, t.m.id, { status: 'ganador' });
       toast('Ganador · ahora pide stock');
-      openOrderFor([{ modelId: t.m.id, qty: t.firstQty }], n0(t.m.home) <= 2 ? 'dhl' : 'ddp'); break;
+      openOrderFor([{ modelId: t.m.id, qty: t.firstQty }], 'ddp'); break;
     }
     case 'test-kill': { await db.patch(C.models, b.dataset.id, { status: 'descartado' }); closeSheet(); toast('Fuera · sube el siguiente test'); break; }
     case 'test-price': { const t = brain().tests.find((z) => z.m.id === b.dataset.id); if (!t) break; for (const l of t.live) await db.patch(C.listings, l.id, { price: t.newPrice }); await db.patch(C.models, t.m.id, { listPrice: t.newPrice }); toast('Precio ' + eur(t.newPrice) + ' · manda oferta a los favs'); redrawSheet(); break; }
@@ -1858,6 +2111,43 @@ async function migrate11() {
   await patchSettings({ migr: 11, fixLog: log, fixAt: todayKey() });
 }
 
+// v12 (one time): the 52 € y2kwatches sale is two sales (your screenshot), weights (Watch 1 ≈ 30 g, Watch 2 ≈ 150 g),
+// Watch 1 colours share one family, no DHL (old DHL orders = DUA), unit cost re-split by weight.
+async function recalcAllOrders(log) {
+  for (const o of L('orders').filter((x) => !x.draft).sort((a, b) => (a.date + (a.at || '')).localeCompare(b.date + (b.at || '')))) {
+    const al = landedFromOrder(o); if (!al) continue;
+    for (const id in al.per) { const m = model(id), lo = latestOrderOf(id); if (!m || !lo || lo.id !== o.id) continue; const was = num(m.landed); await db.patch(C.models, id, { landed: al.per[id].landed, landedSrc: al.src, landedOrder: o.id }); if (log && (isNaN(was) || Math.abs(was - al.per[id].landed) >= 0.005)) log.push(`${m.name}: coste ${al.per[id].landed} € (${al.src}${al.byW ? ', envío por peso' : ''}${isNaN(was) ? '' : ', antes ' + was})`); }
+    if (o.status === 'recibido' && al.pouch && o.pouches) await patchSettings({ pouchCost: al.pouch });
+  }
+}
+async function migrate12() {
+  const cur = db.get(C.settings, 'settings'); if (!cur || n0(cur.migr) >= 12) return;
+  const log = [];
+  const x = L('sales').find((v) => r2(n0(v.price)) === 52 && (/sin especificar/i.test(v.modelName || '') || /sin especificar/i.test((model(v.modelId) || {}).name || '')));
+  if (x) {
+    const br = await ensureCore('bronze', true), go = await ensureCore('gold', true);
+    const hc = (m) => { const h = L('sales').filter((v) => v.modelId === m.id && v.imported).map((v) => n0(v.watchCost !== undefined ? v.watchCost : v.cost)).sort((a, b) => a - b); return h.length ? h[h.length >> 1] : isNaN(num(m.landed)) ? null : num(m.landed); };
+    for (const [m, price, suf] of [[br, 25, 'a'], [go, 27, 'b']]) {
+      const c = hc(m);
+      await db.put(C.sales, { id: x.id + '-' + suf, date: x.date, at: x.at, modelId: m.id, modelName: m.name, price, cost: c === null ? 0 : c, watchCost: c === null ? 0 : c, extra: 0, profit: c === null ? null : r2(price - c), costMissing: c === null, account: x.account, fromStock: false, released: !!x.released, releasedAt: x.releasedAt || null, note: 'de la captura de y2kwatches' });
+    }
+    await db.remove(C.sales, x.id);
+    const ph = model(x.modelId); if (ph && /sin especificar/i.test(ph.name) && !L('sales').some((v) => v.modelId === ph.id)) await db.remove(C.models, ph.id);
+    log.push('venta 52 € de y2kwatches → Watch 1 bronze 25 € + Watch 1 golden 27 € (de tu captura)');
+  }
+  for (const k of ['gold', 'silver', 'bronze', 'twiy']) {
+    const m = await ensureCore(k, false); if (!m) continue;
+    const p = { family: k === 'twiy' ? 'Watch 2' : 'Watch 1' };
+    if (!(n0(m.weight) > 0)) p.weight = k === 'twiy' ? 150 : 30;
+    if (k === 'bronze' && !(n0(m.unitPrice) > 0)) { const g = L('models').find((z) => /^watch 1 (golden|silver)/i.test(z.name) && n0(z.unitPrice) > 0); if (g) p.unitPrice = n0(g.unitPrice); }
+    await db.patch(C.models, m.id, p);
+    if (p.weight) log.push(`${m.name}: peso ${p.weight} g`);
+  }
+  for (const o of L('orders')) if (!o.lane || o.lane === 'dhl' || o.lane === 'otro') await db.patch(C.orders, o.id, { lane: o.lane === 'dhl' ? 'dua' : 'ddp' });
+  await recalcAllOrders(log);
+  await patchSettings({ migr: 12, fixLog: [...(cur.fixLog || []), ...log], fixAt: todayKey() });
+}
+
 /* ---------------- login ---------------- */
 function loginView(done) {
   const email = lsGet('lg-login-email', '');
@@ -1893,6 +2183,7 @@ async function boot() {
   await migrate9().catch((e) => console.warn('migrate9', e));
   await migrate10().catch((e) => console.warn('migrate10', e));
   await migrate11().catch((e) => console.warn('migrate11', e));
+  await migrate12().catch((e) => console.warn('migrate12', e));
   shell(); render();
   const ta = $('#comp-text'), fi = $('#comp-file');
   ta.addEventListener('input', () => { ta.style.height = ''; ta.style.height = Math.min(140, ta.scrollHeight) + 'px'; });
