@@ -181,7 +181,7 @@ function brain() {
 }
 const stockOf = (id) => brain().stocks.find((s) => s.m.id === id) || null;
 const agent = createAgent({ db, C, L, model, S0, brain, fresh: () => { brainCache = null; }, costOf, todayKey, nowISO, patchSettings, pouches, pouchCost, cashNow, pendingVinted, owedTotal, spendable });
-const SST = { rotura: ['Sin stock', 'neg'], urgente: ['Urgente', 'neg'], pedir: ['Pedir', 'warn'], ok: ['OK', 'pos'], exceso: ['Exceso', 'warn'], parado: ['Parado', 'warn'], liquidar: ['Liquidar', 'warn'], lento: ['Lento', 'mut'], 'sin datos': ['Sin ventas', 'mut'], fuera: ['Fuera', 'mut'] };
+const SST = { enfria: ['Se enfría', 'warn'], rotura: ['Sin stock', 'neg'], urgente: ['Urgente', 'neg'], pedir: ['Pedir', 'warn'], ok: ['OK', 'pos'], exceso: ['Exceso', 'warn'], parado: ['Parado', 'warn'], liquidar: ['Liquidar', 'warn'], lento: ['Lento', 'mut'], 'sin datos': ['Sin ventas', 'mut'], fuera: ['Fuera', 'mut'] };
 const days1 = (v) => (v === Infinity || isNaN(v) ? '∞' : v >= 100 ? '99+' : String(Math.floor(v)));
 const rate1 = (v) => (v ? v.toFixed(v < 1 ? 2 : 1).replace('.', ',') : '0');
 const STG = { ganador: 'pos', oferta: 'pos', muerto: 'neg', portada: 'warn', datos: 'warn', bajar: 'warn', sigue: '', espera: 'mut', nopub: 'warn' };
@@ -204,7 +204,7 @@ const st = {
   tab: (location.hash.slice(1) && TABS.some((t) => t[0] === location.hash.slice(1))) ? location.hash.slice(1) : lsGet('lg_tab', 'inicio'),
   month: curMonth(), selDay: todayKey(), calMode: lsGet('lg_cal', 'profit'), stockSeg: lsGet('lg_seg', 'relojes'), filter: lsGet('lg_filter', 'activos'),
   confirm: null, sheet: null,
-  chatBusy: false, chatErr: '', chatImgs: [], chatLive: [], aiSetup: false, briefNew: false,
+  chatBusy: false, chatErr: '', chatImgs: [], chatLive: [], aiSetup: false, briefNew: false, aiMovesBusy: false, aiMovesErr: '',
 };
 
 /* ---------------- shell ---------------- */
@@ -318,7 +318,7 @@ function paceBlock() {
     ${tr('Beneficio', money(p.P, true) + (p.PT ? `<span class="sub">de ${eur(p.PT)}</span>` : ''))}
   </tbody></table>`, '<button class="lnk" data-a="tab" data-v="metas">Plan</button>');
 }
-const TAGC = { Datos: 'neg', Deuda: 'neg', Stock: 'acc', Test: 'warn', Cuentas: 'blu', Anuncio: 'blu', Ritmo: 'mut' };
+const TAGC = { Datos: 'neg', Deuda: 'neg', Caja: 'neg', Stock: 'acc', Venta: 'acc', Test: 'warn', Cuentas: 'blu', Anuncio: 'blu', Ritmo: 'mut' };
 function moveAttrs(act) { return `data-a="${act.a}"${act.id ? ` data-id="${esc(act.id)}"` : ''}${act.v ? ` data-v="${esc(act.v)}"` : ''}`; }
 function movesTable(ms, from = 0) {
   if (!ms.length) return empty('Nada urgente. Sube tests y mantén los ganadores publicados.');
@@ -335,9 +335,39 @@ function cajaTable() {
     ${tr('Puedes gastar', money(spendable()), 'tot')}
   </tbody></table>`;
 }
+/* AI moves on Inicio: Claude reads everything and decides; the rules list is only the fallback */
+const AIM_KEY = 'ooq_ai_moves';
+const aiStamp = () => [L('sales').length, L('orders').length, L('spend').length, sum(L('listings').map((l) => (l.snaps || []).length + (l.status === 'live' ? 1 : 0))), sum(L('models').map((m) => n0(m.home) * 7 + n0(m.transit) * 3 + (m.status || '').length)), sum(L('orders').map((o) => n0(o.owed)))].join('.');
+const aiCached = () => { try { return JSON.parse(lsGet(AIM_KEY, 'null')); } catch { return null; } };
+async function ensureAiMoves(force) {
+  if (!agent.key() || st.aiMovesBusy) return;
+  const c = aiCached(), age = c ? Date.now() - c.at : Infinity, stamp = aiStamp();
+  if (!force && c && ((c.stamp === stamp && age < 60 * 60000) || age < 2 * 60000)) return;
+  st.aiMovesBusy = true; st.aiMovesErr = ''; renderSoon();
+  try { const data = await agent.bestMoves(); lsSet(AIM_KEY, JSON.stringify({ at: Date.now(), stamp, data })); }
+  catch (e) { st.aiMovesErr = e.message || String(e); }
+  st.aiMovesBusy = false; renderSoon();
+}
+function irAct(ir) {
+  const [k, id] = String(ir).split(':');
+  if (k === 'test' && id) return { a: 'test', id }; if (k === 'model' && id) return { a: 'model', id };
+  if (k === 'plan') return { a: 'goto-plan' }; if (k === 'catchup') return { a: 'catchup' };
+  return { a: 'tab', v: ['manager', 'stock', 'tests', 'cuentas', 'metas', 'calendario', 'gastos'].includes(k) ? k : 'manager' };
+}
+function aiMovesPanel(bz) {
+  const rules = movesTable(bz.moves.slice(0, 7));
+  if (!agent.key()) return panel('Mejores movimientos', rules + `<div class="foot"><button class="lnk" data-a="tab" data-v="manager">Conecta la IA → decide por ti con toda tu situación</button></div>`, 'reglas');
+  const c = aiCached();
+  if (!c) return panel('Manager IA', `<div class="ai-sit">${st.aiMovesErr ? `<span class="neg">${esc(st.aiMovesErr)}</span>` : '<span class="dots"><i></i><i></i><i></i></span> Analizando tu situación…'}</div>` + rules, '<button class="lnk" data-a="ai-moves">Actualizar</button>');
+  const d = c.data, mv = d.movimientos.map((x) => ({ tag: x.tag, title: x.titulo, why: x.porque, act: irAct(x.ir) }));
+  const mins = Math.round((Date.now() - c.at) / 60000);
+  return panel('Manager IA', `<div class="ai-sit">${esc(d.situacion)}</div>${movesTable(mv)}
+    <div class="foot ai-foot"><span>${st.aiMovesBusy ? 'Actualizando…' : `Hace ${mins < 1 ? 'un momento' : mins < 60 ? mins + ' min' : Math.round(mins / 60) + ' h'}`}${st.aiMovesErr ? ` · <span class="neg">${esc(st.aiMovesErr)}</span>` : ''}</span><button class="lnk" data-a="ai-moves">Actualizar</button><button class="lnk" data-a="tab" data-v="manager">Hablar con el Manager</button></div>`, '<span class="tag acc">IA</span>');
+}
 function viewHome() {
   const cm = curMonth(), pb = payback(), bz = brain();
-  const moves = panel('Mejores movimientos', movesTable(bz.moves.slice(0, 7)) + (bz.moves.length > 7 ? `<div class="foot"><button class="lnk" data-a="moves">Ver los ${bz.moves.length}</button></div>` : ''), `${bz.moves.length}`);
+  setTimeout(() => ensureAiMoves(false), 50);
+  const moves = aiMovesPanel(bz);
   const caja = panel('Caja', cajaTable(), '<button class="lnk" data-a="settings">Ajustar</button>');
   const month = panel(monthName(cm), monthTable(cm));
   const open = L('orders').filter((o) => pb[o.id] && (o.status !== 'recibido' || pb[o.id].rev < pb[o.id].cost)).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 4);
@@ -504,7 +534,7 @@ function viewManager() {
         <div class="field"><label for="ai-key">Clave de la API</label><input id="ai-key" type="password" autocomplete="off" placeholder="sk-ant-…" value="${esc(agent.key())}"></div>
         <div class="field"><label for="ai-model">Modelo</label><select id="ai-model">${AI_MODELS.map(([v, l]) => `<option value="${v}"${v === cur ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
         <div class="hint">La clave se guarda solo en este dispositivo (en el móvil y en el PC la pegas una vez en cada uno). Nunca se sube a GitHub ni a ningún sitio.</div>
-        <div class="err" id="ai-err"></div><button class="primary" data-a="ai-save">Guardar y empezar</button></div>`)}</div></div>`;
+        <div class="err" id="ai-err"></div><button class="primary" data-a="ai-save">Guardar y empezar</button></div>`)}</div><div class="col">${panel('Avisos en el móvil', `<div class="stack pad"><p class="lead2">Briefing a las 9:00, tests a las 24h y 48h, stock urgente y resumen a las 21:00, por Telegram, con la app cerrada.</p><button class="ghost" data-a="notif">Cómo activarlo (5 pasos)</button></div>`)}</div></div>`;
   }
   const hist = agent.history().filter((m) => !m.hidden || m.role === 'assistant');
   const msgs = hist.map((m) => m.role === 'user'
@@ -513,7 +543,7 @@ function viewManager() {
   const live = st.chatBusy ? `<div class="msg ai"><div class="bub think">${st.chatLive.length ? `<div class="acts">${st.chatLive.map((a) => `<div>${esc(a)}</div>`).join('')}</div>` : ''}<span class="dots"><i></i><i></i><i></i></span></div></div>` : '';
   const err = st.chatErr ? `<div class="msg ai"><div class="bub errb">${esc(st.chatErr)}</div></div>` : '';
   const hello = !hist.length ? `<div class="msg ai"><div class="bub"><p><b>Soy tu OOQ Manager.</b></p><p>Veo tu caja, stock, tests, cuentas y plan. Dime lo que pasa ("vendí 2 oro a 30", "subí el negro a tictac") y lo apunto. Mándame capturas de las stats de Vinted y decido el test. Pregúntame qué hacer y te digo el mejor movimiento con números.</p></div></div>` : '';
-  return `<div class="toolbar"><span class="ttl">OOQ Manager</span><span style="display:flex;gap:6px"><button class="btn-o" data-a="chat-clear">${st.confirm === 'chat/all' ? '¿Borrar chat?' : 'Borrar chat'}</button><button class="btn-o" data-a="ai-setup">IA</button></span></div>
+  return `<div class="toolbar"><span class="ttl">OOQ Manager</span><span style="display:flex;gap:6px"><button class="btn-o" data-a="notif">Avisos</button><button class="btn-o" data-a="chat-clear">${st.confirm === 'chat/all' ? '¿Borrar chat?' : 'Borrar chat'}</button><button class="btn-o" data-a="ai-setup">IA</button></span></div>
     <div class="chatlog" id="chatlog">${hello}${msgs}${live}${err}</div>
     <div class="quick">${QUICK.map(([l, q], i) => `<button class="chip" data-a="chat-quick" data-v="${i}"${st.chatBusy ? ' disabled' : ''}>${l}</button>`).join('')}</div>`;
 }
@@ -542,6 +572,7 @@ function readImage(file) {
 }
 async function morningBriefing() {
   if (!agent.key() || lsGet('lg_brief', '') === todayKey() || new Date().getHours() < 6) return;
+  if (L('chat').some((m) => m.source === 'server' && (m.at || '').slice(0, 10) === new Date().toISOString().slice(0, 10))) return; // the server already sent today's briefing
   lsSet('lg_brief', todayKey());
   try {
     const r = await agent.send('Briefing de la mañana. Cómo voy (caja, deuda, mes vs objetivo y mínimo), los 3 movimientos con más impacto de hoy con números, y qué tests tocan control. Corto y agresivo.', [], { hidden: true });
@@ -562,23 +593,25 @@ function viewTests() {
   const ts = bz.tests.slice().sort((x, y) => (TORDER[x.stage] ?? 9) - (TORDER[y.stage] ?? 9) || y.score - x.score);
   const pct = (v) => Math.round(v * 100) + '%';
   const bench = `<table class="xl"><tbody>
-    <tr class="big"><th>Tests corriendo</th><td class="n"><span class="${bz.running < bz.benchN ? 'neg' : 'pos'}">${bz.running}</span><span class="sub" style="display:inline"> de ${bz.benchN}</span></td></tr>
+    <tr class="big"><th>Tests corriendo</th><td class="n"><span class="${bz.running < bz.benchN ? 'neg' : 'pos'}">${bz.running}</span><span class="sub" style="display:inline"> de ${bz.benchN} a la vez</span></td></tr>
+    ${tr('Tests por semana', `<b>${bz.tp.perWeek}</b>`)}
+    ${tr('Ganadores que faltan', `${bz.tp.winnersNeeded} <span class="sub" style="display:inline">· para ${bz.tp.target} ventas/mes, un ganador hace ~${Math.round(bz.tp.perWinner)}/mes</span>`)}
+    ${tr('De cada 4 tests sale', `${(bz.tp.hit * 4).toFixed(1).replace('.', ',')} ganador`)}
     ${tr('Favoritos de un ganador tuyo', pct(b.fav))}
     ${tr('Vistas por día de un ganador', Math.round(b.vpd))}
     ${tr('Ofertas por 100 vistas', b.opv.toFixed(1).replace('.', ','))}
   </tbody></table><div class="foot">${b.learned ? `Medido en ${b.n} datos de tus ganadores.` : 'Valores de arranque: en cuanto metas stats de tus ganadores, se calculan con tus datos.'}</div>`;
   const rules = `<table class="xl list"><tbody>
-    <tr><td><b>24h</b><span class="sub">pocas vistas para lo que hace un ganador → portada y título nuevos</span></td></tr>
-    <tr><td><b>48h</b><span class="sub">2+ ofertas, o favs de ganador + 1 oferta → GANADOR. Favs a la mitad de un ganador y 0 ofertas → MUERTO</span></td></tr>
-    <tr><td><b>72h</b><span class="sub">sin venta → baja 5 € y manda oferta a todos los que dieron favorito</span></td></tr>
-    <tr><td><b>96h</b><span class="sub">sin venta → MUERTO, lo que quede a precio de salida</span></td></tr>
-    <tr><td><b>Siempre</b><span class="sub">1 venta = ganador. Una oferta que te deja buen beneficio = acéptala</span></td></tr>
+    <tr><td><b>24h</b><span class="sub">pocas vistas para lo que hace un ganador → portada y título nuevos ya</span></td></tr>
+    <tr><td><b>48h · veredicto</b><span class="sub">0 ofertas → MUERTO. 2+ ofertas, o 1 oferta con favs de ganador → GANADOR, pide</span></td></tr>
+    <tr><td><b>1 oferta floja</b><span class="sub">24h de última oportunidad a −3 €. A las 72h sin venta → MUERTO</span></td></tr>
+    <tr><td><b>Siempre</b><span class="sub">1 venta = ganador. Oferta con buen beneficio = acéptala</span></td></tr>
   </tbody></table>`;
   const list = ts.length ? `<div class="tscroll"><table class="xl list stock"><thead><tr><th>Test</th><th class="n">Tiempo</th><th class="n">Vistas</th><th class="n">Favs</th><th class="n">Ofer.</th><th class="n">Nota</th></tr></thead><tbody>${ts.map((t) => `
     <tr class="click" data-a="test" data-id="${esc(t.m.id)}"><td>${esc(t.m.name)}<span class="sub"><b class="${STG[t.stage] || ''}">${B.STAGE[t.stage]}</b> · ${esc(t.act || t.why)}</span></td>
     <td class="n">${t.ls.length ? hh(t.hours) : '·'}</td><td class="n">${t.ls.length ? t.views : '·'}</td><td class="n">${t.views ? pct(t.favRate) : '·'}</td><td class="n">${t.ls.length ? t.offers + (t.best ? `<span class="sub">${t.best} €</span>` : '') : '·'}</td>
     <td class="n barcell">${t.ls.length ? pbar(t.score / 100, t.score >= 70 ? 'won' : '') + `<span>${t.score}</span>` : '·'}</td></tr>`).join('')}</tbody></table></div><div class="foot">Toca un test para meter stats, cambiar precio o decidir.</div>`
-    : empty('No hay tests. Sube 3 a la vez: un ganador nuevo sale de aquí.');
+    : empty(`No hay tests. Necesitas ${brain().tp.perWeek} esta semana: los ganadores nuevos salen de aquí.`);
   return `<div class="toolbar"><span class="ttl">Tests</span><button class="btn-g" data-a="newtest">+ Test nuevo</button></div>
     <div class="cols wide"><div class="col">${panel('En test', list)}</div><div class="col">${panel('Banco de tests', bench)}${panel('Reglas rápidas', rules)}</div></div>`;
 }
@@ -732,6 +765,9 @@ function sheetHTML() {
         <div style="display:flex;gap:8px;flex-wrap:wrap">${ss.enabled ? '<button class="ghost" data-a="sync-now">Sincronizar ahora</button>' : ''}<button class="ghost" data-a="export">Descargar copia</button>${ss.enabled && ss.user ? '<button class="ghost" data-a="logout">Cerrar sesión</button>' : ''}</div></div>`;
   }
   if (kind === 'moves') return head('MEJORES MOVIMIENTOS') + movesTable(brain().moves);
+  if (kind === 'notif') return head('AVISOS EN EL MÓVIL') + `<div class="hint">Te llegan por Telegram aunque la app esté cerrada: briefing a las 9:00 escrito por la IA, controles de 24h y 48h de cada test, stock a punto de romperse, deuda y resumen a las 21:00. Lo envía un proceso gratis de GitHub cada hora.</div>
+    <ol class="steps"><li><b>Telegram</b> → busca @BotFather → /newbot → ponle nombre (ej. OOQ Manager) → copia el token</li><li>Abre tu bot nuevo → pulsa <b>Start</b></li><li><b>Supabase</b> → tu proyecto → Project Settings → API Keys → Secret keys → copia la clave (sb_secret_…)</li><li><b>GitHub</b> → repo ooq-ledger → Settings → Secrets and variables → Actions → New repository secret, 3 veces:<br>· TELEGRAM_BOT_TOKEN = token del paso 1<br>· SUPABASE_SECRET_KEY = clave del paso 3<br>· ANTHROPIC_API_KEY = tu clave de la IA</li><li>GitHub → pestaña <b>Actions</b> → OOQ Manager notifications → Run workflow → te llega el briefing al momento</li></ol>
+    <div class="hint">Las claves quedan cifradas en GitHub; nadie las ve, ni en el repo público. Desde ahí funciona solo cada hora.</div>`;
   if (kind === 'catchup') {
     const ms = sortedModels().filter((m) => m.status !== 'descartado'), accs = acctNames();
     return head('PONERME AL DÍA') + `<div class="hint">Lo que la app no sabe. Rellena solo lo que cambia; lo vacío se queda igual. "Vendidos" = los de los últimos 14 días que NO apuntaste (solo para calcular ritmo, no cuentan como ventas en la caja).</div>
@@ -1224,7 +1260,9 @@ document.addEventListener('click', async (e) => {
     }
     case 'goto-plan': st.stockSeg = 'plan'; lsSet('lg_seg', 'plan'); if (st.sheet) closeSheet(); setTab('stock'); break;
     case 'moves': openSheet('moves'); break;
+    case 'ai-moves': ensureAiMoves(true); break;
     case 'catchup': openSheet('catchup'); break;
+    case 'notif': openSheet('notif'); break;
     case 'test': openSheet('test', { id: b.dataset.id }); break;
     case 'newtest': openSheet('newtest'); break;
     case 'listing': openSheet('listing', { id: b.dataset.id }); break;

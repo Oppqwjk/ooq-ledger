@@ -9,6 +9,24 @@ const n0 = (v) => { const x = parseFloat(String(v == null ? '' : v).replace(',',
 const r2 = (v) => Math.round(v * 100) / 100;
 const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
 
+export const SYSTEM = `Eres OOQ Manager, el operador del negocio de relojes de Yassin en Vinted (cuenta principal "tictac spain"). Compra en 1688, vende en Vinted. Objetivo: 3.000 €/mes de beneficio en abril 2027 y 4.500–5.000 €/mes en junio 2027.
+
+Cómo hablas:
+- En el idioma en que te escriba (español o inglés). Directo, corto, agresivo con los objetivos, sin rodeos. Sin emojis. Viñetas y flechas (->) para causa y efecto. Números exactos con los cálculos.
+- Siempre terminas con lo que tiene que hacer AHORA (máx. 3 cosas) con números y fechas.
+- Nunca inventas datos. Si falta algo, lo pides en una frase. Si está equivocado, se lo dices con el número que lo demuestra.
+
+Qué haces:
+- Ves todos sus datos en DATOS (se actualizan en cada mensaje). Si ves pocas ventas apuntadas, pregúntale cuántas ha vendido de cada reloj en 14 días y usa ponerme_al_dia antes de dar consejos de stock. Los cálculos de stock, tests, cuentas y movimientos ya están hechos ahí: úsalos y explícalos.
+- Cuando te cuente algo que ha pasado (venta, anuncio subido, stats, gasto, pago, retirada, cambio de stock) LO APUNTAS con las herramientas, sin pedir permiso, y confirmas con los totales nuevos. Si es ambiguo (qué reloj, qué cuenta, qué precio) preguntas antes.
+- Capturas de Vinted: lees vistas, favoritos, ofertas y la mejor oferta y llamas a registrar_stats. Si no se leen bien, lo dices.
+- Tests estrictos: 24h = control de vistas (pocas -> portada y título nuevos). 48h = veredicto: 0 ofertas = MUERTO, sin excusas. 2+ ofertas, o 1 oferta con favs de ganador, o 1 venta = GANADOR -> pedir. 1 oferta floja = 24h de última oportunidad a −3 €, y a las 72h sin venta = muerto. Oferta que deja buen beneficio = aceptarla. Cuántos tests: los que diga tests_ritmo (salen del objetivo), nunca te limitas a 3.
+- Stock: si un reloj no vende en 7 días, no se repone aunque quede poco: primero se mueve (portada, precio, otra cuenta). Con pocas ventas apuntadas no inventes ritmos: pregunta.
+- Stock: deuda primero, nada nuevo hasta pagarla. Pedidos pagados con ventas. Ganadores por DDP, huecos urgentes por DHL. Usa el pedido recomendado.
+- Anuncios: nunca marcas, logos, "réplica", "inspirado en", ni relojes que parezcan de lujo (atraen reportes). Nada de "ojo" ni gótico. Fotos propias, esfera real.
+- Cuentas: cada ganador en máx. 2 cuentas con fotos y texto distintos; tests solo en la principal; lo retirado por reportes sale de esa cuenta 30 días. Cuentas extra solo de personas reales con su propio móvil, DNI y banco, vendiendo su stock en depósito. No ayudas a ocultar cuentas múltiples con los mismos datos ni a engañar a Vinted (dispositivos falsos, IPs, etc.): explicas que una cuenta enlazada congela el dinero pendiente de todas.
+- Impuestos y autónomo: das números, pero la decisión la confirma su gestor.`;
+
 export function createAgent(api) {
   const { db, C, L, model, S0, brain, fresh, costOf, todayKey, nowISO, patchSettings, pouches, pouchCost } = api;
 
@@ -146,7 +164,7 @@ export function createAgent(api) {
       plazos: bz.lead,
       pedido_recomendado: { lineas: bz.plan.lines.map((l) => ({ reloj: l.m.name, via: l.lane, uds: l.qty, coste: r(l.cost) })), sin_caja_para: bz.plan.skipped.map((k) => ({ reloj: k.s.m.name, via: k.lane, uds: k.want })) },
       tests: bz.tests.map((t) => ({ reloj: t.m.name, id: t.m.id, etapa: t.stage, horas: r(t.hours, 0), vistas: t.views, favs: t.favs, ofertas: t.offers, mejor_oferta: t.best, vendidos: t.sold, nota: t.score, por_que: t.why, accion: t.act, siguiente_control_h: t.next })),
-      referencia_ganador: bz.bench, tests_corriendo: bz.running, tests_objetivo: bz.benchN,
+      referencia_ganador: bz.bench, tests_corriendo: bz.running, tests_a_la_vez: bz.benchN, tests_ritmo: bz.tp,
       cuentas: bz.acc.accs.map((a) => ({ cuenta: a.name, estado: a.status, salud: a.health, principal: a.main, anuncios_activos: a.live.length, ventas_7d: a.s7, ventas_30d: a.s30, ventas_dia: r(a.rate), retiradas_30d: a.rem30 })),
       cuentas_necesarias: bz.need,
       reparto: bz.dist.map((d) => `${d.k} ${d.m.name} ${d.k === 'publicar' ? 'en' : 'de'} ${d.acc}: ${d.why}`),
@@ -157,22 +175,7 @@ export function createAgent(api) {
     };
   }
 
-  const SYSTEM = `Eres OOQ Manager, el operador del negocio de relojes de Yassin en Vinted (cuenta principal "tictac spain"). Compra en 1688, vende en Vinted. Objetivo: 3.000 €/mes de beneficio en abril 2027 y 4.500–5.000 €/mes en junio 2027.
 
-Cómo hablas:
-- En el idioma en que te escriba (español o inglés). Directo, corto, agresivo con los objetivos, sin rodeos. Sin emojis. Viñetas y flechas (->) para causa y efecto. Números exactos con los cálculos.
-- Siempre terminas con lo que tiene que hacer AHORA (máx. 3 cosas) con números y fechas.
-- Nunca inventas datos. Si falta algo, lo pides en una frase. Si está equivocado, se lo dices con el número que lo demuestra.
-
-Qué haces:
-- Ves todos sus datos en DATOS (se actualizan en cada mensaje). Si ves pocas ventas apuntadas, pregúntale cuántas ha vendido de cada reloj en 14 días y usa ponerme_al_dia antes de dar consejos de stock. Los cálculos de stock, tests, cuentas y movimientos ya están hechos ahí: úsalos y explícalos.
-- Cuando te cuente algo que ha pasado (venta, anuncio subido, stats, gasto, pago, retirada, cambio de stock) LO APUNTAS con las herramientas, sin pedir permiso, y confirmas con los totales nuevos. Si es ambiguo (qué reloj, qué cuenta, qué precio) preguntas antes.
-- Capturas de Vinted: lees vistas, favoritos, ofertas y la mejor oferta y llamas a registrar_stats. Si no se leen bien, lo dices.
-- Tests rápidos: control a las 24h, 48h, 72h y 96h. 1 venta = ganador. 2+ ofertas en 48h, o favs de ganador + 1 oferta = ganador. Favs a la mitad de un ganador y 0 ofertas a las 48h = muerto. 72h sin venta = baja 5 € y oferta a los favs. 96h sin venta = muerto. Oferta que deja buen beneficio = aceptarla.
-- Stock: deuda primero, nada nuevo hasta pagarla. Pedidos pagados con ventas. Ganadores por DDP, huecos urgentes por DHL. Usa el pedido recomendado.
-- Anuncios: nunca marcas, logos, "réplica", "inspirado en", ni relojes que parezcan de lujo (atraen reportes). Nada de "ojo" ni gótico. Fotos propias, esfera real.
-- Cuentas: cada ganador en máx. 2 cuentas con fotos y texto distintos; tests solo en la principal; lo retirado por reportes sale de esa cuenta 30 días. Cuentas extra solo de personas reales con su propio móvil, DNI y banco, vendiendo su stock en depósito. No ayudas a ocultar cuentas múltiples con los mismos datos ni a engañar a Vinted (dispositivos falsos, IPs, etc.): explicas que una cuenta enlazada congela el dinero pendiente de todas.
-- Impuestos y autónomo: das números, pero la decisión la confirma su gestor.`;
 
   /* ---------- the conversation ---------- */
   const key = () => { try { return localStorage.getItem('ooq_ai_key') || ''; } catch { return ''; } };
@@ -197,11 +200,13 @@ Qué haces:
     return msgs;
   }
 
-  async function call(messages) {
+  async function call(messages, extraSystem, noTools) {
+    const body = { model: modelId(), max_tokens: 1800, system: SYSTEM + (extraSystem || '') + '\n\nDATOS (ahora mismo):\n' + JSON.stringify(snapshot()), messages };
+    if (!noTools) body.tools = TOOLS;
     const res = await fetch(API, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-api-key': key(), 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-      body: JSON.stringify({ model: modelId(), max_tokens: 1800, system: SYSTEM + '\n\nDATOS (ahora mismo):\n' + JSON.stringify(snapshot()), tools: TOOLS, messages }),
+      body: JSON.stringify(body),
     });
     const j = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -242,5 +247,22 @@ Qué haces:
     return { text: out.trim(), actions };
   }
 
-  return { send, snapshot, findModel, run, TOOLS, key, modelId, history };
+  // The AI reads the whole situation and picks the moves for Inicio.
+  const MOVES_TASK = `
+
+TAREA AHORA: eres la pantalla de inicio. Mira toda su situación (caja, deuda, stock real y si se vende o no, tests, cuentas, ritmo del mes vs objetivo, calidad de los datos) y decide los movimientos que más le acercan a 5.000 €/mes desde HOY con lo que tiene. Los "mejores_movimientos" de DATOS son cálculos automáticos: úsalos solo si tienen sentido; descarta los que no (por ejemplo, reponer algo que tiene poco stock pero no se vende). Piensa como un operador agresivo, no como una calculadora: busca palancas (subir tests, precio, portadas, mover stock parado, cobrar, abrir cuenta cuando toque).
+Devuelve SOLO un JSON válido, sin texto antes ni después:
+{"situacion":"2-3 frases duras y concretas con números de dónde está","movimientos":[{"tag":"Stock|Test|Venta|Cuentas|Caja|Datos|Ritmo","titulo":"acción concreta corta con números","porque":"una frase con el número que lo justifica","ir":"manager|stock|plan|tests|cuentas|catchup|metas|test:<id>|model:<id>"}]}
+Entre 3 y 7 movimientos, el primero el de más impacto. Sin emojis.`;
+  async function bestMoves() {
+    if (!key()) throw new Error('Falta la clave de la API.');
+    const r = await call([{ role: 'user', content: 'Situación y mejores movimientos ahora mismo.' }], MOVES_TASK, true);
+    const txt = (r.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
+    const m = txt.match(/\{[\s\S]*\}/); if (!m) throw new Error('La IA no devolvió movimientos.');
+    const j = JSON.parse(m[0]);
+    return { situacion: String(j.situacion || ''), movimientos: (j.movimientos || []).slice(0, 7).map((x) => ({ tag: String(x.tag || ''), titulo: String(x.titulo || ''), porque: String(x.porque || ''), ir: String(x.ir || 'manager') })) };
+  }
+  const dataHash = () => { const s0 = JSON.stringify({ ...snapshot(), hora: 0 }); let h = 0; for (let i = 0; i < s0.length; i++) h = (h * 31 + s0.charCodeAt(i)) | 0; return String(h); };
+
+  return { send, snapshot, findModel, run, TOOLS, key, modelId, history, bestMoves, dataHash };
 }

@@ -28,7 +28,7 @@ export const FALLBACK = {
   maxAccPerModel: 2,
   pendingDays: 10,                  // days a sale stays pending in Vinted before it's in your money
 };
-export const STAGE = { espera: 'Esperando', datos: 'Faltan datos', portada: 'Cambia portada', sigue: 'Sigue', bajar: 'Baja precio', oferta: 'Oferta buena', ganador: 'Ganador', muerto: 'Muerto', nopub: 'Sin publicar' };
+export const STAGE = { espera: 'Esperando', datos: 'Faltan datos', portada: 'Cambia portada', sigue: 'Sigue', bajar: 'Última oportunidad', oferta: 'Oferta buena', ganador: 'Ganador', muerto: 'Muerto', nopub: 'Sin publicar' };
 
 /* ---------------- demand ---------------- */
 // Weighted sales per day over the last 28 days. Recent days weigh more (half-life 7 days),
@@ -127,6 +127,10 @@ export function stockFor(m, d, x) {
   if (stock <= r.rop) r.ddpQty = Math.max(5, ceil5(r.target - stock - r.bridge));
   else if (r.bridge) r.ddpQty = Math.max(0, ceil5(r.target - stock - r.bridge));
   r.qty = r.bridge + r.ddpQty;
+  if (d.last7 === 0 && d.prev7 > 0 && home > 0) {
+    r.status = 'enfria'; r.qty = r.bridge = r.ddpQty = 0;
+    r.why = `0 ventas en 7 días (antes ${d.prev7}) → no repongas: portada nueva, baja 3 € o muévelo de cuenta`; return r;
+  }
   if (home === 0) { r.status = 'rotura'; r.why = transit ? `0 en casa · llegan ${transit} el ${fd(next ? next.eta : '')}${r.bridge ? ` → DHL ${r.bridge} uds tapa el hueco` : ''}` : `0 en casa y nada en camino · pierdes ~${(rate * 7).toFixed(1)} ventas/semana`; }
   else if (r.gap > 0) { r.status = 'urgente'; r.why = `se acaba el ${fd(r.outDate)}, el pedido llega el ${fd(next.eta)} → ${r.gap} días sin stock` + (r.bridge ? ` → DHL ${r.bridge} uds ya` : ' → DHL tampoco llega antes: no aceptes ofertas bajas, vende a precio completo'); }
   else if (r.coverAll < L && r.bridge) { r.status = 'urgente'; r.why = `${Math.floor(r.coverAll)} días de stock y un DDP tarda ${L} → DHL ${r.bridge} para no parar`; }
@@ -201,26 +205,27 @@ export function testFor(m, x) {
   t.score = Math.min(100, t.score);
   // first bulk order: base 15, more when it already pulls sales or offers
   t.firstQty = Math.min(40, 15 + 5 * Math.max(0, t.sold - 1) + 5 * Math.max(0, t.offers - 1));
-  const cps = [24, 48, 72, 96], h = t.hours, cp = cps.filter((c) => h >= c).pop() || 0;
-  t.next = cps.find((c) => c > h) || null;
-  const snapH = t.lastSnap ? hrs(t.lastSnap, now) : Infinity; // hours since last stats
-  const needData = cp && (snapH > h - cp + 6); // no stats taken after the current checkpoint
+  // strict: 24h = photo check, 48h = verdict. No offer in 48h = dead. 1 weak offer = 24h last chance at −3 €.
+  const cps = [24, 48, 72], h = t.hours, cp = cps.filter((c) => h >= c).pop() || 0;
+  t.next = cps.find((c) => c > h && c <= 48) || (h < 72 && h >= 48 && t.offers === 1 ? 72 : null);
+  const snapH = t.lastSnap ? hrs(t.lastSnap, now) : Infinity;
+  const needData = cp && (snapH > h - cp + 6);
   const goodOffer = t.best && t.best - cost >= Math.max(12, 0.5 * (price - cost));
-  if (t.sold && h <= 120) { t.stage = 'ganador'; t.why = `${t.sold} vendido${t.sold > 1 ? 's' : ''} en ${Math.round(h)}h`; t.act = `Ganador → pide ${t.firstQty}`; return t; }
-  if (goodOffer) { t.stage = 'oferta'; t.why = `oferta de ${t.best} € = ${Math.round(t.best - cost)} € de beneficio`; t.act = 'Acéptala: una venta en el test vale más que esperar'; return t; }
-  if (h < 24) { t.stage = t.views ? 'sigue' : 'espera'; t.why = `${Math.round(h)}h publicado`; t.act = `Stats a las 24h`; return t; }
-  if (needData) { t.stage = 'datos'; t.why = `control de ${cp}h sin stats`; t.act = 'Manda captura o mete vistas, favoritos y ofertas'; return t; }
+  const dead = `Fuera → sube el siguiente; lo que quede a ${Math.max(Math.round(cost + 8), 20)},95 €`;
+  if (t.sold) { t.stage = 'ganador'; t.why = `${t.sold} vendido${t.sold > 1 ? 's' : ''} en ${Math.round(h)}h`; t.act = `Ganador → pide ${t.firstQty}`; return t; }
+  if (goodOffer) { t.stage = 'oferta'; t.why = `oferta de ${t.best} € = ${Math.round(t.best - cost)} € de beneficio`; t.act = 'Acéptala ya: una venta en test = ganador'; return t; }
+  if (h < 24) { t.stage = t.views ? 'sigue' : 'espera'; t.why = `${Math.round(h)}h publicado`; t.act = 'Stats a las 24h'; return t; }
+  if (needData) { t.stage = 'datos'; t.why = `control de ${cp}h sin stats`; t.act = 'Manda la captura de stats ya'; return t; }
   const expViews = bench.vpd * Math.min(h, 48) / 24;
-  if (cp >= 48 && (t.offers >= 2 || (t.favRate >= bench.fav && t.offers >= 1))) { t.stage = 'ganador'; t.why = `${Math.round(t.favRate * 100)}% favs · ${t.offers} ofertas en ${Math.round(h)}h`; t.act = `Ganador → pide ${t.firstQty}`; return t; }
-  if (cp >= 96) { t.stage = 'muerto'; t.why = `${Math.round(h / 24)} días sin venta`; t.act = `Fuera → lo que quede a ${Math.max(Math.round(cost + 8), 20)},95 €`; return t; }
-  if (cp >= 48 && t.views >= 10 && t.favRate < 0.5 * bench.fav && !t.offers) { t.stage = 'muerto'; t.why = `${Math.round(t.favRate * 100)}% favs (un ganador tuyo hace ${Math.round(bench.fav * 100)}%) y 0 ofertas`; t.act = 'Fuera → sube el siguiente test'; return t; }
-  if (t.views < 0.5 * expViews) { t.stage = 'portada'; t.why = `${t.views} vistas, esperabas ~${Math.round(expViews)}`; t.act = 'Foto de portada nueva + título nuevo ya'; return t; }
-  if (cp >= 72) {
-    const np = Math.floor(Math.max(n0(m.minPrice) || 0, cost + 12, price - 5)) + 0.95;
-    t.newPrice = np;
-    t.stage = 'bajar'; t.why = `${Math.round(h)}h sin venta con ${t.favs} favs`; t.act = `Baja a ${np.toFixed(2).replace('.', ',')} € + manda oferta a los ${t.favs} favs`; return t;
+  if (t.offers >= 2 || (t.offers >= 1 && t.favRate >= 0.7 * bench.fav)) { t.stage = 'ganador'; t.why = `${t.offers} oferta${t.offers > 1 ? 's' : ''} · ${Math.round(t.favRate * 100)}% favs en ${Math.round(h)}h`; t.act = `Ganador → pide ${t.firstQty}`; return t; }
+  if (cp >= 48 && !t.offers) { t.stage = 'muerto'; t.why = `48h y 0 ofertas (${t.views} vistas, ${Math.round(t.favRate * 100)}% favs)`; t.act = dead; return t; }
+  if (cp >= 72) { t.stage = 'muerto'; t.why = `72h: 1 oferta y ninguna venta`; t.act = dead; return t; }
+  if (cp >= 48) {
+    const np = Math.floor(Math.max(n0(m.minPrice) || 0, cost + 12, price - 3)) + 0.95; t.newPrice = np;
+    t.stage = 'bajar'; t.why = `48h: solo 1 oferta y favs flojos`; t.act = `Última oportunidad 24h: baja a ${np.toFixed(2).replace('.', ',')} € + oferta a los ${t.favs} favs`; return t;
   }
-  t.stage = 'sigue'; t.why = `${Math.round(t.favRate * 100)}% favs · ${t.offers} ofertas`; t.act = `Siguiente control a las ${t.next}h`; return t;
+  if (t.views < 0.5 * expViews) { t.stage = 'portada'; t.why = `${t.views} vistas en 24h, un ganador hace ~${Math.round(expViews)}`; t.act = 'Portada y título nuevos ya: quedan 24h para el veredicto'; return t; }
+  t.stage = 'sigue'; t.why = `${Math.round(t.favRate * 100)}% favs · ${t.offers} ofertas`; t.act = 'Veredicto a las 48h: sin oferta = fuera'; return t;
 }
 
 /* ---------------- accounts ---------------- */
@@ -308,6 +313,19 @@ export function paceFor(x) {
   return { mk, plan, S, P, T, MIN, PT, dim, day, left, paceDay, need: T ? Math.max(0, (T - S) / left) : 0, needMin: MIN ? Math.max(0, (MIN - S) / left) : 0, proj, ok: T ? proj >= T : null, minOk: MIN ? proj >= MIN : null };
 }
 
+// How many tests you need, from the goal: winners missing for this month's target ÷ how often a test becomes a winner.
+export function testPace({ stocks, pace, settings, models }) {
+  const live = stocks.filter((s) => s.m.status === 'ganador' && s.rate >= 0.1);
+  const perWinner = live.length ? Math.max(8, median(live.map((s) => s.rate * 30))) : 20;
+  const target = pace.T || n0(settings.monthlyGoal) / 20 || 50;
+  const winnersNeeded = Math.max(0, Math.ceil(target / perWinner) - live.length);
+  const hit = clamp(n0(settings.hitRate) || 0.25, 0.05, 0.8);
+  // +1 winner a month to replace the one that tires out
+  const perWeek = Math.max(n0(settings.testBench) || FALLBACK.bench, Math.ceil((winnersNeeded + 1) / hit / 4));
+  const concurrent = Math.max(n0(settings.testBench) || FALLBACK.bench, Math.ceil(perWeek / 3));
+  return { perWinner, winnersNeeded, hit, perWeek, concurrent, liveWinners: live.length, target };
+}
+
 export function accountsNeeded(acc, pace) {
   const rates = acc.active.map((a) => a.rate).filter((r) => r > 0);
   const per = rates.length ? median(rates) : 0;
@@ -332,7 +350,8 @@ export function analyze(input) {
   const pace = paceFor(x);
   const need = accountsNeeded(acc, pace);
   const plan = orderPlan(stocks, cashFree, costOf);
-  const benchN = n0(settings.testBench) || FALLBACK.bench;
+  const tp = testPace({ stocks, pace, settings, models });
+  const benchN = tp.concurrent;
   const moves = [];
   const add = (p, tag, title, why, act) => moves.push({ p, tag, title, why, act });
   const logged14 = sales.filter((v) => v.date >= addD(today, -13)).length;
@@ -345,6 +364,7 @@ export function analyze(input) {
     else if (s.status === 'urgente') add(90, 'Stock', `${s.m.name}: ${s.bridge ? `DHL ${s.bridge} uds ya` : s.gap ? `${s.gap} días sin stock` : 'pide ya'}`, s.why, { a: s.qty ? 'goto-plan' : 'model', id: s.m.id });
     else if (s.status === 'pedir') add(72, 'Stock', `${s.m.name}: pide ${s.ddpQty} por DDP`, s.why, { a: 'goto-plan' });
     else if (s.status === 'parado' || s.status === 'liquidar') add(55, 'Stock', `${s.m.name}: stock parado`, s.why, { a: 'model', id: s.m.id });
+    else if (s.status === 'enfria') add(74, 'Stock', `${s.m.name}: se ha parado`, s.why, { a: 'model', id: s.m.id });
   }
   for (const t of tests) {
     const P = { ganador: 89, oferta: 91, muerto: 87, portada: 86, datos: 85, bajar: 83, nopub: t.home ? 82 : 0 }[t.stage];
@@ -352,11 +372,11 @@ export function analyze(input) {
   }
   const running = tests.filter((t) => t.ls.length && !['ganador', 'muerto'].includes(t.stage)).length;
   const waiting = tests.filter((t) => !t.ls.length && t.home > 0).length, findN = benchN - running - waiting;
-  if (findN > 0) add(68, 'Test', `Busca ${findN} test${findN > 1 ? 's' : ''} nuevo${findN > 1 ? 's' : ''} en 1688`, `${running} corriendo${waiting ? ` + ${waiting} en casa sin publicar` : ''} de ${benchN} → sin tests no hay ganadores nuevos`, { a: 'tab', v: 'tests' });
+  if (findN > 0) add(76, 'Test', `Busca ${findN} test${findN > 1 ? 's' : ''} nuevo${findN > 1 ? 's' : ''} en 1688`, `para ${pace.T || '?'} ventas/mes te faltan ${tp.winnersNeeded} ganadores → ${tp.perWeek} tests/semana, ${benchN} a la vez (${running} corriendo${waiting ? `, ${waiting} sin publicar` : ''})`, { a: 'tab', v: 'tests' });
   for (const d of dist) add(d.p, 'Cuentas', `${d.k === 'publicar' ? 'Publica' : d.k === 'mover' ? 'Mueve' : 'Quita'} ${d.m.name} ${d.k === 'publicar' ? 'en' : 'de'} ${d.acc}`, d.why, { a: 'tab', v: 'cuentas' });
   for (const z of stale) add(62, 'Anuncio', `Renueva ${z.m.name} en ${z.l.account}`, `${z.days} días sin vender ese anuncio → portada nueva y vuelve a subirlo`, { a: 'listing', id: z.l.id });
   if (pace.T && pace.ok === false) add(60, 'Ritmo', `Necesitas ${pace.need.toFixed(1)} ventas/día`, `vas a ${pace.paceDay.toFixed(1)}/día → acabas en ~${pace.proj} de ${pace.T}`, { a: 'tab', v: 'metas' });
   for (const a of acc.accs) if (a.health === 'peligro' || a.health === 'riesgo') add(a.health === 'peligro' ? 84 : 64, 'Cuentas', `${a.name}: ${a.health}`, `${a.rem14} retirada${a.rem14 > 1 ? 's' : ''} en 14 días → solo ganadores seguros, nada que parezca de marca`, { a: 'tab', v: 'cuentas' });
   moves.sort((a, b) => b.p - a.p);
-  return { x, lead: x.lead, bench: x.bench, stocks, tests, acc, dist, stale, pace, need, plan, moves, running, benchN };
+  return { x, lead: x.lead, bench: x.bench, stocks, tests, acc, dist, stale, pace, need, plan, moves, running, benchN, tp };
 }
