@@ -470,7 +470,7 @@ function milestonesCard() {
 function viewHome() {
   const cm = curMonth(), pb = payback(), bz = brain();
   const moves = panel('Mejores movimientos', movesTable(bz.moves.slice(0, 7)) + (bz.moves.length > 7 ? `<div class="foot"><button class="lnk" data-a="moves">Ver los ${bz.moves.length}</button></div>` : ''), String(bz.moves.length));
-  const exp = panel('Para tu Manager', `<div class="stack pad"><p class="lead2 mut">Copia tus datos y pégalos en tu proyecto de Claude.</p><div class="btnrow"><button class="btn-g" data-a="export-ai">Copiar para Claude</button><button class="btn-o" data-a="export-ai-file">Descargar .txt</button></div></div>`);
+  const exp = panel('Para tu Manager', `<div class="stack pad"><p class="lead2 mut">Copia tus datos y pégalos en tu proyecto de Claude.</p><div class="btnrow"><button class="btn-g" data-a="export-ai">Copiar para Claude</button><button class="btn-o" data-a="export-ai-file">Descargar .txt</button><button class="btn-o" data-a="import">Importar ventas</button></div></div>`);
   const caja = panel('Caja', cajaTable(), '<button class="lnk" data-a="settings">Ajustar</button>');
   const month = panel(monthName(cm), monthTable(cm));
   const open = L('orders').filter((o) => pb[o.id] && (o.status !== 'recibido' || pb[o.id].rev < pb[o.id].cost)).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 4);
@@ -876,7 +876,14 @@ function sheetHTML() {
       <button class="ghost" data-a="theme" style="justify-self:start">${document.documentElement.dataset.theme === 'dark' ? 'Usar tema claro' : 'Usar tema oscuro'}</button>
       <div class="card" style="padding:14px;display:grid;gap:8px"><div class="eyebrow">Sincronización</div>
         <div style="font-size:14px">${ss.enabled ? (ss.user ? `Conectado como <b>${esc(ss.user)}</b>` : 'Sin sesión') : 'Solo en este dispositivo (sin conectar)'}${ss.enabled && ss.at ? `<div class="hint">Última sincronización ${new Date(ss.at).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}${ss.pending ? ` · ${ss.pending} cambios por subir` : ''}</div>` : ''}${ss.error ? `<div class="hint neg">${esc(ss.error)}</div>` : ''}</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">${ss.enabled ? '<button class="ghost" data-a="sync-now">Sincronizar ahora</button>' : ''}<button class="ghost" data-a="export-ai">Copiar para Claude</button><button class="ghost" data-a="export">Descargar copia</button>${ss.enabled && ss.user ? '<button class="ghost" data-a="logout">Cerrar sesión</button>' : ''}</div></div>`;
+        <div style="display:flex;gap:8px;flex-wrap:wrap">${ss.enabled ? '<button class="ghost" data-a="sync-now">Sincronizar ahora</button>' : ''}<button class="ghost" data-a="export-ai">Copiar para Claude</button><button class="ghost" data-a="import">Importar ventas (CSV)</button><button class="ghost" data-a="export">Descargar copia</button>${ss.enabled && ss.user ? '<button class="ghost" data-a="logout">Cerrar sesión</button>' : ''}</div></div>`;
+  }
+  if (kind === 'import') {
+    const accs = acctNames(), main = brain().acc.mainName || accs[0];
+    return head('IMPORTAR VENTAS') + `<div class="hint">Tu historial en CSV: <b>date,item,sold,cost,boost</b>. Gold, Silver, Bronze → Watch 1 · TWIY → Watch 2 · el resto (Mstianq, Rokyn, Poedagar…) queda como descartado.</div>
+      <div class="field"><label for="imp-txt">Pega el CSV</label><textarea id="imp-txt" rows="7" style="font:13px/1.4 ui-monospace,monospace;background:var(--surface-2);border:1px solid var(--line);border-radius:11px;padding:10px 12px;width:100%;resize:vertical" placeholder="date,item,sold,cost,boost&#10;2026-07-12,TWIY,34.41,6.13,1.86">${esc(ctx.txt || '')}</textarea></div>
+      <div class="fields2"><div class="field"><label for="imp-acc">Cuenta de esas ventas</label><select id="imp-acc">${accs.map((a) => `<option${a === main ? ' selected' : ''}>${esc(a)}</option>`).join('')}</select></div><div class="field"><label for="imp-file">o un archivo .csv</label><input id="imp-file" type="file" accept=".csv,.txt,text/csv,text/plain"></div></div>
+      <div id="imp-prev">${importPreview(ctx.txt || '')}</div><div class="err" id="sh-err"></div><button class="primary" data-a="save-import">Importar</button>`;
   }
   if (kind === 'moves') return head('MEJORES MOVIMIENTOS') + movesTable(brain().moves);
   if (kind === 'pending') {
@@ -1152,6 +1159,12 @@ function afterSheet() {
     };
     sheetEl.querySelector('#r-dhl').addEventListener('input', up); up();
   }
+  const it = sheetEl.querySelector('#imp-txt');
+  if (it) {
+    const up = () => { st.sheet.ctx.txt = it.value; $('#imp-prev', sheetEl).innerHTML = importPreview(it.value); labelTables(sheetEl); };
+    it.addEventListener('input', up);
+    $('#imp-file', sheetEl).addEventListener('change', async (e) => { const f = e.target.files && e.target.files[0]; if (f) { it.value = await f.text(); up(); } });
+  }
   const gm = sheetEl.querySelector('#g-metric');
   if (gm) {
     const up = () => { const v = gm.value; $('#g-th-wrap', sheetEl).hidden = v !== 'streak'; $('#g-hint', sheetEl).textContent = v === 'streak' ? 'Objetivo en meses seguidos (ej. 2).' : v === 'units' ? 'Objetivo en relojes vendidos.' : 'Objetivo en euros.'; };
@@ -1402,11 +1415,11 @@ function exportForClaude() {
     const r = stockOf(m.id), eff = r ? r.m.status : m.status;
     return `${m.name} [${eff}${eff !== m.status ? ', marcado ' + m.status : ''}]: ${ss.length} ventas total, ${d30.length} en 30 días, precio medio ${d30.length ? e2(sum(d30.map((v) => n0(v.price))) / d30.length) + ' €' : '-'}, coste ${e2(costOf(m))} € (${costSrc(m)}), 1688 ${n0(m.unitPrice) ? e2(n0(m.unitPrice)) + ' €' : 'FALTA'}, peso ${n0(m.weight) ? n0(m.weight) + ' g' : 'FALTA'}, en casa ${n0(m.home)}, en camino ${n0(m.transit)}`;
   });
-  const t = new Date(), fix = S0().migr9log || [];
+  const t = new Date(), fix = [...(S0().migr9log || []), ...(S0().migr10log || [])];
   return `OOQ LEDGER · export ${todayKey()} ${pad(t.getHours())}:${pad(t.getMinutes())}\n` +
     `Datos de mi negocio de relojes. "calculos", "st" (estado de stock) y "pedido_sugerido" los calcula la app. "e" = estado real (ganador solo con 1 venta o 2 ofertas). Dime los mejores movimientos de stock y números.\n\n` +
     `MESES\n${months.join('\n')}\n\nPOR RELOJ\n${perModel.join('\n')}\n` +
-    (fix.length ? `\nCORRECCIONES DE DATOS (v9)\n${fix.join('\n')}\n` : '') +
+    (fix.length ? `\nCORRECCIONES DE DATOS\n${fix.join('\n')}\n` : '') +
     `\nDATOS\n${JSON.stringify(snap)}`;
 }
 async function copyText(txt) {
@@ -1467,6 +1480,12 @@ document.addEventListener('click', async (e) => {
       break;
     }
     case 'settings': openSheet('settings'); break;
+    case 'import': openSheet('import', {}); break;
+    case 'save-import': {
+      const btn = b; btn.disabled = true; const res = await runImport(sv('imp-txt'), sv('imp-acc'));
+      btn.disabled = false; if (res.err) { shErr(res.err); break; }
+      closeSheet(); toast(`${res.nS} ventas importadas · boosts ${eur(res.boosts)}`); break;
+    }
     case 'chat-send': chatSend(); break;
     case 'chat-quick': chatSend(QUICK[Number(v)][1], true); break;
     case 'chat-rmimg': st.chatImgs.splice(Number(v), 1); drawImgs(); break;
@@ -1557,6 +1576,85 @@ document.addEventListener('click', async (e) => {
 });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && st.sheet) closeSheet(); });
 window.addEventListener('hashchange', () => { const h = location.hash.slice(1); if (TABS.some((t) => t[0] === h) && h !== st.tab) setTab(h); });
+
+/* ---------------- your watch names + importing your sales history ---------------- */
+const nm = (t) => String(t || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+// the names you use. winners need proof (sales); sanda and black are tests
+const CORE = {
+  gold: { name: 'Watch 1 golden', win: true, re: /^(watch 1 golden|watch 1 gold|reloj oro|oro|gold|golden)$/ },
+  silver: { name: 'Watch 1 silver', win: true, re: /^(watch 1 silver|reloj plata|plata|silver)$/ },
+  bronze: { name: 'Watch 1 bronze', win: true, re: /bron/ },
+  twiy: { name: 'Watch 2 The World Is Yours', win: true, re: /world is yours|twiy|^watch 2/ },
+  sanda: { name: 'Sanda', re: /sanda/ },
+  black: { name: 'Black gothic', re: /^(negro escultorico|black gothic|black gotic|black|negro)/ },
+};
+const keyOfItem = (item) => { const n = nm(item); return /^boost/.test(n) ? 'boost' : /gold|golden|^oro|dorad/.test(n) ? 'gold' : /silver|plata|platead/.test(n) ? 'silver' : /bron/.test(n) ? 'bronze' : /twiy|world is yours/.test(n) ? 'twiy' : /sanda/.test(n) ? 'sanda' : /black|negro|got/.test(n) ? 'black' : null; };
+// finds your model for a name (merging copies of the same watch), renames it, and sets its status
+async function ensureCore(k, create) {
+  const c = CORE[k], score = (m) => n0(m.home) * 3 + n0(m.transit) * 2 + L('sales').filter((v) => v.modelId === m.id).length;
+  const ms = L('models').filter((m) => m.status !== 'descartado' && c.re.test(nm(m.name))).sort((a, b) => score(b) - score(a));
+  let m = ms[0];
+  for (const o of ms.slice(1)) await mergeModel(o.id, m.id);
+  if (!m && !create) return null;
+  if (!m) m = await db.put(C.models, { name: c.name, status: 'test', home: 0, transit: 0, order: L('models').length + 1 });
+  m = model(m.id);
+  const status = c.win ? (B.proofOf(m, L('sales').filter((x) => !x.cancelled), L('listings')).ok ? 'ganador' : 'test') : 'test';
+  const p = {}; if (m.name !== c.name) { p.name = c.name; p.alias = [m.alias, m.name].filter(Boolean).join(' · '); } if (m.status !== status) p.status = status;
+  if (Object.keys(p).length) await db.patch(C.models, m.id, p);
+  if (p.name) {
+    for (const v of L('sales').filter((x) => x.modelId === m.id && x.modelName !== c.name)) await db.patch(C.sales, v.id, { modelName: c.name });
+    for (const o of L('orders').filter((x) => (x.lines || []).some((l) => l.modelId === m.id))) await db.patch(C.orders, o.id, { lines: o.lines.map((l) => (l.modelId === m.id ? { ...l, name: c.name } : l)) });
+  }
+  return model(m.id);
+}
+// your CSV: date,item,sold,cost,boost. "boost" = Vinted boost paid that day (business spend). BoostOnly = boost without a sale.
+function parseImport(txt) {
+  const rows = [], bad = [];
+  for (const raw of String(txt || '').split(/\r?\n/)) {
+    const line = raw.trim(); if (!line || /^date\b/i.test(line)) continue;
+    const f = (line.includes(';') ? line.split(';') : line.split(',')).map((x) => x.trim());
+    const [date, item, sold, cost, boost] = f;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date || '') || !item || isNaN(num(sold)) || isNaN(num(cost))) { bad.push(line); continue; }
+    rows.push({ date, item, sold: r2(num(sold)), cost: r2(num(cost)), boost: r2(n0(boost)), key: keyOfItem(item) });
+  }
+  return { rows, bad, sales: rows.filter((r) => r.key !== 'boost' && r.sold > 0), boosts: r2(sum(rows.map((r) => r.boost))) };
+}
+function importPreview(txt) {
+  const p = parseImport(txt); if (!p.rows.length) return `<div class="hint">Pega aquí el CSV: date,item,sold,cost,boost</div>${p.bad.length ? `<div class="hint neg">${p.bad.length} línea${p.bad.length === 1 ? '' : 's'} sin leer</div>` : ''}`;
+  const by = {}; for (const r of p.sales) { const n = r.key ? CORE[r.key].name : r.item; (by[n] = by[n] || { n: 0, rev: 0, pr: 0, k: r.key }); by[n].n++; by[n].rev += r.sold; by[n].pr += r.sold - r.cost; }
+  const exist = new Set(L('sales').map((v) => v.id)), dupe = importRows(p).filter((x) => exist.has(x.id)).length;
+  const odd = p.sales.filter((r) => r.key === 'twiy' && r.cost > 8).map((r) => `${r.date} TWIY coste ${r.cost}`);
+  return `<table class="xl list"><thead><tr><th>Reloj</th><th class="n">Ventas</th><th class="n">Benef.</th></tr></thead><tbody>${Object.entries(by).sort((a, b) => b[1].n - a[1].n).map(([n, v]) => `<tr><td>${esc(n)}<span class="sub">${v.k ? (CORE[v.k].win ? 'ganador' : 'test') : 'descartado (ya no lo vendes)'} · media ${eur(v.rev / v.n)}</span></td><td class="n">${v.n}</td><td class="n pos">${eur(v.pr)}</td></tr>`).join('')}
+    <tr class="tot"><td>Total</td><td class="n">${p.sales.length}</td><td class="n pos">${eur(sum(p.sales.map((r) => r.sold - r.cost)))}</td></tr></tbody></table>
+    <div class="hint">Boosts: ${eur(p.boosts)} → van a Gastos negocio (Boost Vinted), uno por día. Ventas antiguas: ya liberadas, no tocan banco, saldo ni stock.${dupe ? ` ${dupe} ya estaban importadas: se actualizan, no se duplican.` : ''}${p.bad.length ? ` <span class="neg">${p.bad.length} línea${p.bad.length === 1 ? '' : 's'} sin leer.</span>` : ''}</div>${odd.length ? `<div class="hint warn">Revisa: ${esc(odd.join(', '))} (las demás TWIY cuestan 6,12)</div>` : ''}`;
+}
+// stable ids: importing the same file twice updates instead of duplicating
+function importRows(p) {
+  const seen = {};
+  return p.sales.map((r) => { const base = `imp-${r.date}-${nm(r.item).replace(/ /g, '')}-${r.sold}-${r.cost}`; seen[base] = (seen[base] || 0) + 1; return { ...r, id: base + '-' + seen[base] }; });
+}
+async function runImport(txt, acc) {
+  const p = parseImport(txt); if (!p.sales.length) return { err: 'No hay ventas que leer.' };
+  const mids = {};
+  for (const k of Object.keys(CORE)) if (p.sales.some((r) => r.key === k)) mids[k] = (await ensureCore(k, true)).id;
+  for (const r of p.sales.filter((z) => !z.key)) {
+    const n = nm(r.item); if (mids['x:' + n]) continue;
+    let m = L('models').find((z) => nm(z.name) === n || nm(z.name).startsWith(n + ' ') || nm(z.name).split(' ')[0] === n.split(' ')[0] && n.length >= 5);
+    if (!m) m = await db.put(C.models, { name: r.item.charAt(0).toUpperCase() + r.item.slice(1), status: 'descartado', home: 0, transit: 0, order: L('models').length + 1 });
+    else if (!n0(m.home) && !n0(m.transit) && m.status !== 'descartado') await db.patch(C.models, m.id, { status: 'descartado' });
+    mids['x:' + n] = m.id;
+  }
+  let nS = 0;
+  for (const r of importRows(p)) {
+    const mid = r.key ? mids[r.key] : mids['x:' + nm(r.item)], m = model(mid), at = r.date + 'T12:00:00.000Z';
+    await db.put(C.sales, { id: r.id, date: r.date, at, modelId: mid, modelName: m ? m.name : r.item, price: r.sold, cost: r.cost, watchCost: r.cost, extra: 0, estimated: false, profit: r2(r.sold - r.cost), account: acc, fromStock: false, pouch: false, released: true, releasedAt: at, imported: true });
+    nS++;
+  }
+  const days = {}; for (const r of p.rows) if (r.boost > 0) { const d = (days[r.date] = days[r.date] || { amt: 0, n: 0 }); d.amt += r.boost; d.n++; }
+  for (const [date, d] of Object.entries(days)) await db.put(C.spend, { id: 'imp-boost-' + date, date, at: date + 'T12:00:00.000Z', amount: r2(d.amt), kind: 'negocio', cat: 'Boost Vinted', note: `boost importado (${d.n})`, imported: true });
+  for (const k of Object.keys(mids)) if (CORE[k]) await ensureCore(k, false); // now with sales → winners
+  return { nS, boosts: p.boosts };
+}
 
 /* ---------------- first run data ---------------- */
 async function seedIfEmpty() {
@@ -1672,6 +1770,14 @@ async function migrate9() {
   await patchSettings({ migr: 9, migr9log: log });
 }
 
+// v10 (one time): your names. Watch 1 golden / silver / bronze, Watch 2 The World Is Yours (winners, need sales as proof), Sanda and Black gothic in test.
+async function migrate10() {
+  const cur = db.get(C.settings, 'settings'); if (!cur || n0(cur.migr) >= 10) return;
+  const log = [];
+  for (const k of Object.keys(CORE)) { const before = L('models').filter((m) => m.status !== 'descartado' && CORE[k].re.test(nm(m.name))).map((m) => m.name); const m = await ensureCore(k, false); if (m && before.length) log.push(`${before.join(' + ')} → ${m.name} (${m.status})`); }
+  await patchSettings({ migr: 10, migr10log: log });
+}
+
 /* ---------------- login ---------------- */
 function loginView(done) {
   const email = lsGet('lg-login-email', '');
@@ -1705,6 +1811,7 @@ async function boot() {
   await migrate7().catch((e) => console.warn('migrate7', e));
   await migrate8().catch((e) => console.warn('migrate8', e));
   await migrate9().catch((e) => console.warn('migrate9', e));
+  await migrate10().catch((e) => console.warn('migrate10', e));
   shell(); render();
   const ta = $('#comp-text'), fi = $('#comp-file');
   ta.addEventListener('input', () => { ta.style.height = ''; ta.style.height = Math.min(140, ta.scrollHeight) + 'px'; });
