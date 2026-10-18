@@ -129,7 +129,7 @@ export function stockFor(m, d, x) {
   r.qty = r.bridge + r.ddpQty;
   if (d.last7 === 0 && d.prev7 > 0 && home > 0) {
     r.status = 'enfria'; r.qty = r.bridge = r.ddpQty = 0;
-    r.why = `0 ventas en 7 días (antes ${d.prev7}) → no repongas: portada nueva, baja 3 € o muévelo de cuenta`; return r;
+    r.why = `0 ventas en 7 días (antes ${d.prev7}) → no repongas hasta que vuelva a vender · ${Math.round(home * cost)} € en stock`; return r;
   }
   if (home === 0) { r.status = 'rotura'; r.why = transit ? `0 en casa · llegan ${transit} el ${fd(next ? next.eta : '')}${r.bridge ? ` → DHL ${r.bridge} uds tapa el hueco` : ''}` : `0 en casa y nada en camino · pierdes ~${(rate * 7).toFixed(1)} ventas/semana`; }
   else if (r.gap > 0) { r.status = 'urgente'; r.why = `se acaba el ${fd(r.outDate)}, el pedido llega el ${fd(next.eta)} → ${r.gap} días sin stock` + (r.bridge ? ` → DHL ${r.bridge} uds ya` : ' → DHL tampoco llega antes: no aceptes ofertas bajas, vende a precio completo'); }
@@ -367,16 +367,13 @@ export function analyze(input) {
     else if (s.status === 'enfria') add(74, 'Stock', `${s.m.name}: se ha parado`, s.why, { a: 'model', id: s.m.id });
   }
   for (const t of tests) {
-    const P = { ganador: 89, oferta: 91, muerto: 87, portada: 86, datos: 85, bajar: 83, nopub: t.home ? 82 : 0 }[t.stage];
-    if (P) add(P, 'Test', `${t.m.name}: ${STAGE[t.stage]}`, `${t.why} → ${t.act}`, { a: 'test', id: t.m.id });
+    // only what changes stock: a winner means ordering, a dead test means never ordering it, missing stats block the verdict
+    if (t.stage === 'ganador') add(89, 'Test', `${t.m.name}: ganador → pide ${t.firstQty}`, t.why, { a: 'test', id: t.m.id });
+    else if (t.stage === 'muerto') add(87, 'Test', `${t.m.name}: muerto → no pedir más`, `${t.why}${t.home ? ` · quedan ${t.home} en casa` : ''}`, { a: 'test', id: t.m.id });
+    else if (t.stage === 'datos') add(85, 'Datos', `${t.m.name}: faltan stats del test`, `${t.why} → sin vistas, favs y ofertas no hay veredicto`, { a: 'test', id: t.m.id });
   }
   const running = tests.filter((t) => t.ls.length && !['ganador', 'muerto'].includes(t.stage)).length;
-  const waiting = tests.filter((t) => !t.ls.length && t.home > 0).length, findN = benchN - running - waiting;
-  if (findN > 0) add(76, 'Test', `Busca ${findN} test${findN > 1 ? 's' : ''} nuevo${findN > 1 ? 's' : ''} en 1688`, `para ${pace.T || '?'} ventas/mes te faltan ${tp.winnersNeeded} ganadores → ${tp.perWeek} tests/semana, ${benchN} a la vez (${running} corriendo${waiting ? `, ${waiting} sin publicar` : ''})`, { a: 'tab', v: 'tests' });
-  for (const d of dist) add(d.p, 'Cuentas', `${d.k === 'publicar' ? 'Publica' : d.k === 'mover' ? 'Mueve' : 'Quita'} ${d.m.name} ${d.k === 'publicar' ? 'en' : 'de'} ${d.acc}`, d.why, { a: 'tab', v: 'cuentas' });
-  for (const z of stale) add(62, 'Anuncio', `Renueva ${z.m.name} en ${z.l.account}`, `${z.days} días sin vender ese anuncio → portada nueva y vuelve a subirlo`, { a: 'listing', id: z.l.id });
   if (pace.T && pace.ok === false) add(60, 'Ritmo', `Necesitas ${pace.need.toFixed(1)} ventas/día`, `vas a ${pace.paceDay.toFixed(1)}/día → acabas en ~${pace.proj} de ${pace.T}`, { a: 'tab', v: 'metas' });
-  for (const a of acc.accs) if (a.health === 'peligro' || a.health === 'riesgo') add(a.health === 'peligro' ? 84 : 64, 'Cuentas', `${a.name}: ${a.health}`, `${a.rem14} retirada${a.rem14 > 1 ? 's' : ''} en 14 días → solo ganadores seguros, nada que parezca de marca`, { a: 'tab', v: 'cuentas' });
   moves.sort((a, b) => b.p - a.p);
   return { x, lead: x.lead, bench: x.bench, stocks, tests, acc, dist, stale, pace, need, plan, moves, running, benchN, tp };
 }

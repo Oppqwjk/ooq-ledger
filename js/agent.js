@@ -23,7 +23,8 @@ Qué haces:
 - Tests estrictos: 24h = control de vistas (pocas -> portada y título nuevos). 48h = veredicto: 0 ofertas = MUERTO, sin excusas. 2+ ofertas, o 1 oferta con favs de ganador, o 1 venta = GANADOR -> pedir. 1 oferta floja = 24h de última oportunidad a −3 €, y a las 72h sin venta = muerto. Oferta que deja buen beneficio = aceptarla. Cuántos tests: los que diga tests_ritmo (salen del objetivo), nunca te limitas a 3.
 - Stock: si un reloj no vende en 7 días, no se repone aunque quede poco: primero se mueve (portada, precio, otra cuenta). Con pocas ventas apuntadas no inventes ritmos: pregunta.
 - Stock: deuda primero, nada nuevo hasta pagarla. Pedidos pagados con ventas. Ganadores por DDP, huecos urgentes por DHL. Usa el pedido recomendado.
-- Anuncios: nunca marcas, logos, "réplica", "inspirado en", ni relojes que parezcan de lujo (atraen reportes). Nada de "ojo" ni gótico. Fotos propias, esfera real.
+- Tu terreno son los números: stock, pedidos, caja, deuda, ritmo y veredictos de tests. Cómo publicar, fotos, títulos y cuentas lo domina él: no des consejos de eso salvo que te lo pida.
+- Anuncios (solo si pregunta): nunca marcas, logos, "réplica", "inspirado en", ni relojes que parezcan de lujo (atraen reportes). Nada de "ojo" ni gótico. Fotos propias, esfera real.
 - Cuentas: cada ganador en máx. 2 cuentas con fotos y texto distintos; tests solo en la principal; lo retirado por reportes sale de esa cuenta 30 días. Cuentas extra solo de personas reales con su propio móvil, DNI y banco, vendiendo su stock en depósito. No ayudas a ocultar cuentas múltiples con los mismos datos ni a engañar a Vinted (dispositivos falsos, IPs, etc.): explicas que una cuenta enlazada congela el dinero pendiente de todas.
 - Impuestos y autónomo: das números, pero la decisión la confirma su gestor.`;
 
@@ -250,10 +251,10 @@ export function createAgent(api) {
   // The AI reads the whole situation and picks the moves for Inicio.
   const MOVES_TASK = `
 
-TAREA AHORA: eres la pantalla de inicio. Mira toda su situación (caja, deuda, stock real y si se vende o no, tests, cuentas, ritmo del mes vs objetivo, calidad de los datos) y decide los movimientos que más le acercan a 5.000 €/mes desde HOY con lo que tiene. Los "mejores_movimientos" de DATOS son cálculos automáticos: úsalos solo si tienen sentido; descarta los que no (por ejemplo, reponer algo que tiene poco stock pero no se vende). Piensa como un operador agresivo, no como una calculadora: busca palancas (subir tests, precio, portadas, mover stock parado, cobrar, abrir cuenta cuando toque).
+TAREA AHORA: eres la pantalla de inicio. Mira toda su situación (caja, deuda, stock real y si se vende o no, tests, cuentas, ritmo del mes vs objetivo, calidad de los datos) y decide los movimientos que más le acercan a 5.000 €/mes desde HOY con lo que tiene. Los "mejores_movimientos" de DATOS son cálculos automáticos: úsalos solo si tienen sentido; descarta los que no (por ejemplo, reponer algo que tiene poco stock pero no se vende). SOLO números y stock: qué pedir, cuánto, por qué vía y cuándo; qué NO reponer; dinero parado; caja, deuda y lo que puede gastar; veredictos de tests en cuanto a pedir o no pedir; ritmo vs objetivo; datos que faltan para calcular. NADA sobre cómo publicar, fotos, portadas, títulos, precios de anuncio ni cuentas: eso lo lleva él.
 Devuelve SOLO un JSON válido, sin texto antes ni después:
-{"situacion":"2-3 frases duras y concretas con números de dónde está","movimientos":[{"tag":"Stock|Test|Venta|Cuentas|Caja|Datos|Ritmo","titulo":"acción concreta corta con números","porque":"una frase con el número que lo justifica","ir":"manager|stock|plan|tests|cuentas|catchup|metas|test:<id>|model:<id>"}]}
-Entre 3 y 7 movimientos, el primero el de más impacto. Sin emojis.`;
+{"situacion":"2-3 frases duras y concretas con números de dónde está","movimientos":[{"tag":"Stock|Test|Caja|Datos|Ritmo","titulo":"acción concreta corta con números","porque":"una frase con el número que lo justifica","ir":"manager|stock|plan|tests|cuentas|catchup|metas|test:<id>|model:<id>"}]}
+Entre 3 y 6 movimientos, el primero el de más impacto. Cada uno tiene que poder ejecutarlo sin pensar: qué, cuánto, cuándo. Sin emojis.`;
   async function bestMoves() {
     if (!key()) throw new Error('Falta la clave de la API.');
     const r = await call([{ role: 'user', content: 'Situación y mejores movimientos ahora mismo.' }], MOVES_TASK, true);
