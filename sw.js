@@ -1,5 +1,5 @@
 // Offline cache. Bump VERSION on every deploy so installed apps pick up new files.
-const VERSION = 'ledger-v24';
+const VERSION = 'ledger-v25';
 const SHELL = [
   './', './index.html', './config.js', './manifest.webmanifest', './css/app.css',
   './js/app.js', './js/brain.js', './js/plan.js', './js/agent.js', './js/db.js', './js/sync.js', './js/loader.js', './vendor/supabase.js',

@@ -243,6 +243,7 @@ export function createAgent(api) {
           coste_desactualizado: stale.length ? stale : undefined,
         };
       }),
+      anuncios: api.listingsData ? api.listingsData() : undefined,
       bolsitas: { quedan: pouches(), en_camino: pouchesComing, coste_ud: r(api.pouchCost ? pouchCost() : 0), uso_dia: r(bz.bags ? bz.bags.perDay : 0), dias: bz.bags && bz.bags.days !== null ? r(bz.bags.days, 0) : 'sin uso reciente', nota: 'las bolsitas del pedido son caja (flujo); en el beneficio solo cuenta la bolsita de cada venta, una vez' },
     });
   }

@@ -195,7 +195,7 @@ function brain() {
   return brainCache;
 }
 const stockOf = (id) => brain().stocks.find((s) => s.m.id === id) || null;
-const agent = createAgent({ db, C, L, model, S0, brain, fresh: () => { brainCache = null; }, costOf, todayKey, nowISO, patchSettings, pouches, pouchCost, cashNow, bankNow, vintedBalance, pendingVinted, owedTotal, spendable, pendingBills, costSrc, landedFromOrder, plan: () => plan(), billsDue: () => L('bills').filter((b) => b.month <= curMonth() && !b.paid).map((b) => `${b.month} ${b.concept} ${n0(b.amount)} €`) });
+const agent = createAgent({ db, C, L, model, S0, brain, fresh: () => { brainCache = null; }, costOf, todayKey, nowISO, patchSettings, pouches, pouchCost, cashNow, bankNow, vintedBalance, pendingVinted, owedTotal, spendable, pendingBills, costSrc, landedFromOrder, plan: () => plan(), listingsData: () => listingsData(), billsDue: () => L('bills').filter((b) => b.month <= curMonth() && !b.paid).map((b) => `${b.month} ${b.concept} ${n0(b.amount)} €`) });
 const SST = { 'en camino': ['En camino', 'mut'], 'no repone': ['No se repone', 'mut'], enfria: ['Se enfría', 'warn'], rotura: ['Sin stock', 'neg'], urgente: ['Urgente', 'neg'], pedir: ['Pedir', 'warn'], ok: ['OK', 'pos'], exceso: ['Exceso', 'warn'], parado: ['Parado', 'warn'], liquidar: ['Liquidar', 'warn'], lento: ['Lento', 'mut'], 'sin datos': ['Sin ventas', 'mut'], fuera: ['Fuera', 'mut'] };
 const days1 = (v) => (v === Infinity || isNaN(v) ? '∞' : v >= 100 ? '99+' : String(Math.floor(v)));
 const rate1 = (v) => (v ? v.toFixed(v < 1 ? 2 : 1).replace('.', ',') : '0');
@@ -1023,6 +1023,22 @@ function anuncioNewSheet(ctx) {
   return head('ANUNCIO PUBLICADO') + `<div class="field"><span class="lb">Reloj</span>${watchPicker('an-m', sel, ms)}</div>
     <div class="fields2"><div class="field"><label for="an-acc">Cuenta</label><select id="an-acc">${accs.map((a) => `<option${a === acc ? ' selected' : ''}>${esc(a)}</option>`).join('')}</select></div>${fld('an-price', 'Precio (€)', !isNaN(num(m.listPrice)) ? String(m.listPrice).replace('.', ',') : '')}</div>
     <div class="hint">La hora se guarda sola (ahora). Si lo subiste antes, cámbiala después en el anuncio.</div><div class="err" id="sh-err"></div><button class="primary" data-a="an-save">Guardar</button>`;
+}
+
+// what the manager sees about listings: every listing with its time, stats, rating, and how long it took to sell
+function listingsData() {
+  const bench = soldBench(), r2_ = (v) => Math.round(v * 100) / 100, name = (l) => (model(l.modelId) || {}).name || '?';
+  const snapTxt = (l) => (l.snaps || []).slice().sort((a, b) => a.at.localeCompare(b.at)).map((x) => `${Math.round(hrsBetween(l.listedAt, x.at))}h: ${n0(x.views)}v/${n0(x.favs)}l/${n0(x.offers)}o`);
+  const ls = L('listings').filter((l) => l.listedAt);
+  const bt = bestTimes();
+  return {
+    referencia_nota: { likes_por_vista: r2_(bench.like), vistas_dia: Math.round(bench.vpd), fuente: bench.learned ? `${bench.n} anuncios vendidos` : 'valores de arranque' },
+    por_cuenta: accStats().map((x) => ({ cuenta: x.a, ventas_30d: x.n30, pct_ventas: Math.round(x.share * 100), beneficio_30d: r2_(x.pr30), activos: x.live, tarda_mediana_h: x.tts === null ? null : Math.round(x.tts) })),
+    activos: ls.filter((l) => l.status === 'live').map((l) => { const r = rateListing(l, bench); return { reloj: name(l), cuenta: l.account, precio: n0(l.price), publicado: l.listedAt, horas: Math.round(hrsBetween(l.listedAt)), stats: snapTxt(l), nota: r.grade, puntos: r.score }; }),
+    vendidos: ls.filter((l) => l.status === 'sold').sort((a, b) => (b.soldAt || '').localeCompare(a.soldAt || '')).slice(0, 40).map((l) => ({ reloj: name(l), cuenta: l.account, precio: n0(l.soldPrice || l.price), publicado: l.listedAt, vendido: l.soldAt, horas_hasta_venta: l.hoursToSell === null || l.hoursToSell === undefined ? null : Math.round(n0(l.hoursToSell)), vistas: l.viewsAtSale ?? null, likes: l.likesAtSale ?? null, stats: snapTxt(l) })),
+    quitados_sin_vender: ls.filter((l) => l.status === 'down' || l.status === 'removed').slice(-20).map((l) => ({ reloj: name(l), cuenta: l.account, precio: n0(l.price), publicado: l.listedAt, quitado: l.endedAt, horas: l.endedAt ? Math.round(hrsBetween(l.listedAt, l.endedAt)) : null, por: l.status === 'removed' ? 'Vinted (reporte)' : 'tú', stats: snapTxt(l) })),
+    mejor_hora: bt.n >= 5 ? bt.slots.map((r) => ({ franja: `${SLOTS[r.i][0]} ${SLOTS[r.i][1]}-${SLOTS[r.i][2]}h`, publicados: r.posted, vendidos: r.sold, tarda_mediana_h: r.tts === null ? null : Math.round(r.tts) })) : `faltan datos (${bt.n} de 5 ventas apuntadas desde Anuncios)`,
+  };
 }
 
 /* ================= tests: a rating that tells you if it's good ================= */
