@@ -65,7 +65,9 @@ const planOf = (mk) => (S0().plan || {})[mk] || null;
 const goalFor = (mk) => { const p = planOf(mk); return p && n0(p.profit) ? n0(p.profit) : goal(); };
 // cost of one watch: the real one if known, otherwise the estimate from Ajustes
 const costOf = (m) => (m && !isNaN(num(m.landed)) ? num(m.landed) : n0(S0().defaultCost));
-const isEst = (m) => !m || isNaN(num(m.landed));
+const isEst = (m) => !m || isNaN(num(m.landed)) || m.landedSrc === 'estimado';
+// where a unit cost comes from: an order (real, or estimated while DHL/IVA isn't known), typed by you, or the default
+const costSrc = (m) => (!m || isNaN(num(m.landed)) ? 'por defecto' : m.landedSrc === 'real' ? 'real (pedido)' : m.landedSrc === 'estimado' ? 'estimado (pedido)' : 'puesto a mano');
 // pouches: a supply that goes with some sales, not a product
 const pouchCost = () => { const s = S0(); return n0(s.pouchCost !== undefined ? s.pouchCost : s.perSale); };
 const pouches = () => n0(S0().pouches);
@@ -188,12 +190,12 @@ function metricValue(g) {
 /* ---------------- manager engine ---------------- */
 let brainCache = null;
 function brain() {
-  if (!brainCache) brainCache = B.analyze({ models: L('models'), sales: L('sales'), orders: L('orders'), listings: L('listings'), settings: S0(), now: Date.now(), today: todayKey(), costOf, cashFree: spendable(), owed: owedTotal() });
+  if (!brainCache) brainCache = B.analyze({ models: L('models'), sales: L('sales').filter((x) => !x.cancelled), orders: L('orders'), listings: L('listings'), settings: S0(), now: Date.now(), today: todayKey(), costOf, cashFree: spendable(), owed: owedTotal(), pouches: pouches(), bizMonth: parts(curMonth()).biz });
   return brainCache;
 }
 const stockOf = (id) => brain().stocks.find((s) => s.m.id === id) || null;
-const agent = createAgent({ db, C, L, model, S0, brain, fresh: () => { brainCache = null; }, costOf, todayKey, nowISO, patchSettings, pouches, pouchCost, cashNow, bankNow, vintedBalance, pendingVinted, owedTotal, spendable });
-const SST = { enfria: ['Se enfría', 'warn'], rotura: ['Sin stock', 'neg'], urgente: ['Urgente', 'neg'], pedir: ['Pedir', 'warn'], ok: ['OK', 'pos'], exceso: ['Exceso', 'warn'], parado: ['Parado', 'warn'], liquidar: ['Liquidar', 'warn'], lento: ['Lento', 'mut'], 'sin datos': ['Sin ventas', 'mut'], fuera: ['Fuera', 'mut'] };
+const agent = createAgent({ db, C, L, model, S0, brain, fresh: () => { brainCache = null; }, costOf, todayKey, nowISO, patchSettings, pouches, pouchCost, cashNow, bankNow, vintedBalance, pendingVinted, owedTotal, spendable, pendingBills, costSrc, landedFromOrder });
+const SST = { 'en camino': ['En camino', 'mut'], 'no repone': ['No se repone', 'mut'], enfria: ['Se enfría', 'warn'], rotura: ['Sin stock', 'neg'], urgente: ['Urgente', 'neg'], pedir: ['Pedir', 'warn'], ok: ['OK', 'pos'], exceso: ['Exceso', 'warn'], parado: ['Parado', 'warn'], liquidar: ['Liquidar', 'warn'], lento: ['Lento', 'mut'], 'sin datos': ['Sin ventas', 'mut'], fuera: ['Fuera', 'mut'] };
 const days1 = (v) => (v === Infinity || isNaN(v) ? '∞' : v >= 100 ? '99+' : String(Math.floor(v)));
 const rate1 = (v) => (v ? v.toFixed(v < 1 ? 2 : 1).replace('.', ',') : '0');
 const STG = { ganador: 'pos', oferta: 'pos', muerto: 'neg', portada: 'warn', datos: 'warn', bajar: 'warn', sigue: '', espera: 'mut', nopub: 'warn' };
@@ -377,7 +379,9 @@ function monthTable(mk) {
     ${tr('Gastos negocio', money(-p.biz))}
     ${tr('Gastos personales', money(-p.pers))}
     ${tr('Flujo del banco', money(p.flow, true), 'tot')}
-    ${tr('Beneficio', money(p.net, true), 'tot2')}
+    ${tr('Beneficio de ventas', money(p.profit, true) + '<span class="sub">venta − coste del reloj − bolsita</span>')}
+    ${p.biz ? tr('− Gastos negocio', money(-p.biz)) : ''}
+    ${tr('Beneficio neto', money(p.net, true), 'tot2')}
     <tr><th>Meta ${eur(g)}</th><td class="n barcell">${pbar(p.net / g)}<span>${Math.max(0, Math.round(p.net / g * 100))}%</span></td></tr>
     ${pace}
   </tbody></table>`;
@@ -385,7 +389,8 @@ function monthTable(mk) {
 
 function paceBlock() {
   const p = brain().pace, mn = MONTHS[pm(p.mk).m - 1];
-  if (!p.T) return panel('Este mes', `<table class="xl"><tbody>${tr('Ventas', p.S)}${tr('Beneficio', money(p.P, true))}</tbody></table><div class="foot"><button class="lnk" data-a="tab" data-v="metas">Pon el objetivo del mes en Plan</button></div>`);
+  const netRow = tr('Beneficio neto', money(p.net, true) + `<span class="sub">ventas ${eur(p.P)}${p.biz ? ` − gastos negocio ${eur(p.biz)}` : ''}${p.PT ? ` · objetivo ${eur(p.PT)}` : ''}</span>`);
+  if (!p.T) return panel('Este mes', `<table class="xl"><tbody>${tr('Ventas', p.S)}${netRow}</tbody></table><div class="foot"><button class="lnk" data-a="tab" data-v="metas">Pon el objetivo del mes en Plan</button></div>`);
   const pct = p.S / p.T, done = p.S >= p.T;
   return panel('Objetivo ' + mn, `<table class="xl"><tbody>
     <tr class="big"><th>Ventas</th><td class="n">${p.S}<span class="sub" style="display:inline"> de ${p.T}</span></td></tr>
@@ -393,8 +398,8 @@ function paceBlock() {
     ${tr('Mínimo del mes', p.MIN + (p.S >= p.MIN ? ' <span class="pos">✓</span>' : ` <span class="sub" style="display:inline">faltan ${p.MIN - p.S}</span>`))}
     ${tr('Tu ritmo', rate1(p.paceDay) + '/día')}
     ${done ? tr('Objetivo', '<span class="pos">cumplido</span>') : tr(`Necesitas (${p.left} días)`, `<b class="${p.paceDay >= p.need ? 'pos' : 'neg'}">${rate1(p.need)}/día</b>`)}
-    ${tr('A este ritmo acabas en', `<span class="${p.ok ? 'pos' : p.minOk ? 'warn' : 'neg'}">${p.proj} ventas</span>`, 'tot')}
-    ${tr('Beneficio', money(p.P, true) + (p.PT ? `<span class="sub">de ${eur(p.PT)}</span>` : ''))}
+    ${tr('A este ritmo acabas en', `<span class="${p.ok ? 'pos' : p.minOk ? 'warn' : 'neg'}">${p.proj} ventas</span>` + (p.limit === 'stock' ? `<span class="sub warn">límite: stock (${p.inHand} en casa + ${p.landing} que llegan este mes)${p.projDemand > p.proj ? `, tu ritmo daría ${p.projDemand}` : ''}</span>` : ''), 'tot')}
+    ${netRow}
   </tbody></table>`, '<button class="lnk" data-a="tab" data-v="metas">Plan</button>');
 }
 const TAGC = { Datos: 'neg', Deuda: 'neg', Caja: 'neg', Stock: 'acc', Venta: 'acc', Test: 'warn', Cuentas: 'blu', Anuncio: 'blu', Ritmo: 'mut' };
@@ -547,7 +552,7 @@ function dayRows(k) {
   return h;
 }
 
-const LANE = { dhl: 'DHL', ddp: 'DDP', otro: 'Otro' };
+const LANE = { dhl: 'DHL', ddp: 'DDP', otro: 'DDP' };
 function stockBadge(r) {
   if (!r) return '';
   const [lb, c] = SST[r.status] || ['', ''];
@@ -580,9 +585,9 @@ function viewStock() {
   const parked = sum(bz.stocks.filter((r) => ['parado', 'liquidar', 'exceso'].includes(r.status)).map((r) => r.capital));
   const sumT = `<table class="xl"><tbody>${tr('En casa', home + ' uds')}${tr('En camino', trn + ' uds')}${tr('Stock a coste', eur(val))}${tr('Stock a precio de venta', eur(pot), 'tot')}${parked ? tr('Dinero parado (stock que no rota)', `<span class="warn">${eur(parked)}</span>`) : ''}${tr('Bolsitas en casa', `<span class="${pouches() < 5 ? 'neg' : ''}">${pouches()}</span> <span class="sub" style="display:inline">· ${eur(pouchCost())}/ud</span>`)}</tbody></table><div class="foot"><button class="lnk" data-a="settings">Cambiar bolsitas</button></div>`;
   const table = `<div class="tscroll"><table class="xl list stock"><thead><tr><th>Reloj</th><th class="n">Casa</th><th class="n">Cam.</th><th class="n">/día</th><th class="n">Días</th><th class="n">Coste</th></tr></thead><tbody>${shown.map((m) => {
-    const r = stockOf(m.id), est = isEst(m), stt = STATUS[m.status] ? m.status : 'test';
+    const r = stockOf(m.id), est = isEst(m), eff = r ? r.m.status : m.status, stt = STATUS[eff] ? eff : 'test';
     const live = liveOf(m.id).length;
-    return `<tr class="click${m.status === 'descartado' ? ' off' : ''}" data-a="model" data-id="${esc(m.id)}"><td>${esc(m.name)}<span class="sub"><span class="st-${stt}">${STATUS[stt]}</span>${r && r.status !== 'sin datos' ? ' · ' + stockBadge(r) : ''}${live ? ` · ${live} anuncio${live > 1 ? 's' : ''}` : ''}</span></td>
+    return `<tr class="click${m.status === 'descartado' ? ' off' : ''}" data-a="model" data-id="${esc(m.id)}"><td>${esc(m.name)}<span class="sub"><span class="st-${stt}">${STATUS[stt]}</span>${r && r.status !== 'sin datos' ? ' · ' + stockBadge(r) : ''}${m.status === 'ganador' && eff !== 'ganador' ? ' · <span class="warn">sin prueba</span>' : ''}${live ? ` · ${live} anuncio${live > 1 ? 's' : ''}` : ''}</span></td>
       <td class="n">${n0(m.home)}</td><td class="n">${n0(m.transit) || '·'}</td><td class="n">${r && r.rate ? rate1(r.rate) : '·'}</td><td class="n ${r && r.rate && r.coverAll < r.lead ? 'neg' : ''}">${r && r.rate ? days1(r.coverAll) : '·'}</td><td class="n ${est ? 'est' : ''}">${est ? '≈' : ''}${eur(costOf(m)).replace(/\s?€/, '')}</td></tr>`;
   }).join('') || '<tr><td colspan="6" class="empty">No hay relojes en este filtro.</td></tr>'}</tbody></table></div><div class="foot">/día = ventas por día (las recientes pesan más). Días = días de stock contando lo que viene en camino. Toca un reloj para ver todo su análisis.</div>`;
   const alerts = bz.stocks.filter((r) => ['rotura', 'urgente', 'pedir', 'parado', 'liquidar', 'exceso'].includes(r.status)).sort((a, b) => ({ rotura: 0, urgente: 1, pedir: 2, parado: 3, liquidar: 4, exceso: 5 }[a.status] - { rotura: 0, urgente: 1, pedir: 2, parado: 3, liquidar: 4, exceso: 5 }[b.status]));
@@ -850,8 +855,8 @@ function sheetHTML() {
       <div class="fields2">${fld('m-min', 'Precio mínimo (€)', m.minPrice)}${fld('m-unit', '€/ud en 1688', m.unitPrice)}</div>
       <div class="fields2">${fld('m-home', 'En casa', m.home || 0, 'inputmode="numeric"')}${fld('m-transit', 'En camino', m.transit || 0, 'inputmode="numeric"')}</div>
       <div class="fields2">${fld('m-w', 'Peso con bolsa (g)', m.weight, 'inputmode="numeric"')}<div></div></div>
-      <div class="hint">Coste puesto = precio 1688 + envío + DHL/IVA, por unidad. Se calcula solo al apuntar y recibir pedidos (el envío se reparte por peso si pones el peso).</div><div class="err" id="sh-err"></div>
-      <button class="primary" data-a="save-model">Guardar</button>${ctx.id ? modelAnalysis(ctx.id) : ''}${ctx.id ? `<button class="danger" data-a="del-model">${st.confirm === 'models/' + ctx.id ? 'Pulsa otra vez para borrar' : 'Borrar reloj'}</button>` : ''}`;
+      <div class="hint">Coste puesto = precio 1688 + envío + DHL/IVA, por unidad. Se calcula solo con los pedidos: el envío se reparte por peso (por eso hace falta el peso). ${ctx.id ? `Ahora: <b>${costSrc(m)}</b>.` : ''} Ganador solo con prueba: 1 venta o 2 ofertas; si no, se guarda como Test.</div><div class="err" id="sh-err"></div>
+      <button class="primary" data-a="save-model">Guardar</button>${ctx.id ? modelAnalysis(ctx.id) + mergeBlock(ctx.id) : ''}${ctx.id ? `<button class="danger" data-a="del-model">${st.confirm === 'models/' + ctx.id ? 'Pulsa otra vez para borrar' : 'Borrar reloj'}</button>` : ''}`;
   }
   if (kind === 'settings') {
     const s = S0(), ss = sync.getStatus();
@@ -982,16 +987,18 @@ function saleBody(ctx) {
 function orderForm(ctx) {
   const ms = sortedModels().filter((m) => m.status !== 'descartado');
   if (!ctx.lines || !ctx.lines.length) ctx.lines = [{ modelId: (ms[0] || {}).id || '__new', qty: '', unit: '', name: '' }];
+  for (const l of ctx.lines) { const m = model(l.modelId); if (m && (l.unit === undefined || l.unit === '') && n0(m.unitPrice)) l.unit = String(m.unitPrice).replace('.', ','); if (m && (l.w === undefined || l.w === '') && n0(m.weight)) l.w = String(m.weight); }
   const opts = (sel) => ms.map((m) => `<option value="${esc(m.id)}"${m.id === sel ? ' selected' : ''}>${esc(m.name)}</option>`).join('') + `<option value="__new"${sel === '__new' ? ' selected' : ''}>+ Reloj nuevo…</option>`;
   const lines = ctx.lines.map((l, i) => `<div class="stack" style="gap:6px"><div class="line-ed">
       <div class="field"><label for="l-m-${i}">${i === 0 ? 'Reloj' : '&nbsp;'}</label><select id="l-m-${i}" data-line="${i}">${opts(l.modelId)}</select></div>
       <div class="field"><label for="l-q-${i}">${i === 0 ? 'Uds' : '&nbsp;'}</label><input id="l-q-${i}" inputmode="numeric" value="${esc(l.qty)}" placeholder="10"></div>
       <div class="field"><label for="l-u-${i}">${i === 0 ? '€/ud 1688' : '&nbsp;'}</label><input id="l-u-${i}" inputmode="decimal" value="${esc(l.unit)}" placeholder="6,50"></div>
+      <div class="field"><label for="l-w-${i}">${i === 0 ? 'Peso g' : '&nbsp;'}</label><input id="l-w-${i}" inputmode="numeric" value="${esc(l.w || '')}" placeholder="30"></div>
       <button class="del" data-a="rmline" data-i="${i}" aria-label="Quitar línea" ${ctx.lines.length === 1 ? 'disabled style="opacity:.3"' : ''}>✕</button></div>
       ${l.modelId === '__new' ? `<input id="l-n-${i}" style="background:var(--surface-2);border:1px solid var(--line);border-radius:11px;padding:10px 12px;font-size:15px" placeholder="Nombre del reloj nuevo" value="${esc(l.name)}" autocomplete="off">` : ''}</div>`).join('');
   return `${lines}<div><button class="ghost" data-a="addline">+ Otra línea</button></div>
     <div class="fields2">${fld('o-pq', 'Bolsitas (uds)', ctx.pq || '', 'inputmode="numeric" placeholder="0"')}${fld('o-pu', '€/bolsita en 1688', ctx.pu || '', 'inputmode="decimal" placeholder="0,30"')}</div>
-    <div class="fields2"><div class="field"><label for="o-lane">Vía</label><select id="o-lane">${[['dhl', 'DHL (rápido, IVA al llegar)'], ['ddp', 'DDP (barato, impuestos incluidos)'], ['otro', 'Otro']].map(([v, l]) => `<option value="${v}"${(ctx.lane || 'ddp') === v ? ' selected' : ''}>${l}</option>`).join('')}</select></div>${fld('o-ship', 'Envío del agente (€)', ctx.ship || '', 'inputmode="decimal" placeholder="70"')}</div>
+    <div class="fields2"><div class="field"><label for="o-lane">Vía</label><select id="o-lane">${[['dhl', 'DHL (rápido, IVA al llegar)'], ['ddp', 'DDP (barato, impuestos incluidos)']].map(([v, l]) => `<option value="${v}"${(ctx.lane || 'ddp') === v ? ' selected' : ''}>${l}</option>`).join('')}</select></div>${fld('o-ship', 'Envío del agente (€)', ctx.ship || '', 'inputmode="decimal" placeholder="70"')}</div>
     <div class="fields2">${fld('o-owed', 'Queda por pagar (€)', ctx.owed || '', 'inputmode="decimal" placeholder="0"')}${dateFld('o-date', ctx.date)}</div>
     ${fld('o-note', 'Nota (opcional)', ctx.note || '', 'autocomplete="off" placeholder="Ej. caja DHL 4 kg"')}
     <div class="preview" id="o-prev"></div>
@@ -1016,7 +1023,7 @@ const POUCH_G = 10;
 // the DHL/IVA charge on arrival split by value. Before arrival, a DHL box is estimated with 21% IVA on top.
 function allocLanded(lines, pq, pu, ship, dhl, ivaEst) {
   const goods = sum(lines.map((l) => l.qty * l.unit)) + pq * pu;
-  const ws = lines.map((l) => n0((model(l.modelId) || {}).weight));
+  const ws = lines.map((l) => n0(l.w) || n0((model(l.modelId) || {}).weight));
   const byW = lines.length > 0 && ws.every((w) => w > 0);
   const totW = byW ? sum(lines.map((l, i) => l.qty * ws[i])) + pq * POUCH_G : 0;
   const share = (val, w) => (byW ? ship * w / totW : goods ? ship * val / goods : 0) + (goods ? dhl * val / goods : 0);
@@ -1050,16 +1057,60 @@ function modelAnalysis(id) {
     </tbody></table>
     <div class="btnrow"><button class="btn-o" data-a="newlisting" data-id="${esc(id)}">+ Anuncio publicado</button>${r.qty ? `<button class="btn-g" data-a="order-model" data-id="${esc(id)}">Pedir ${r.qty}</button>` : ''}</div>`;
 }
+// Same watch saved twice: move everything (sales, listings, order lines, stock) into one and delete the other.
+function mergeBlock(id) {
+  const m = model(id), others = sortedModels().filter((z) => z.id !== id);
+  if (!m || !others.length) return '';
+  const dup = B.possibleDupes(L('models'), S0().notDupes || []).find((d) => d.a.id === id || d.b.id === id), twin = dup ? (dup.a.id === id ? dup.b : dup.a) : null;
+  const nS = L('sales').filter((v) => v.modelId === id).length, c = st.confirm === 'merge/' + id;
+  return `<div class="eyebrow">Fusionar</div>${twin ? `<div class="verdict warn"><b>¿Es el mismo que ${esc(twin.name)}?</b><span>Si lo es, fusiónalos: sus ventas cuentan juntas para el stock.</span><span class="btnrow"><button class="btn-o" data-a="not-dupe" data-id="${esc(id)}" data-v="${esc(twin.id)}">No es el mismo</button></span></div>` : ''}
+    <div class="hint">Pasa ${nS} venta${nS === 1 ? '' : 's'}, anuncios, pedidos y stock de <b>${esc(m.name)}</b> al reloj que elijas, y borra este.</div>
+    <div class="fields2"><div class="field"><label for="m-merge">Fusionar en</label><select id="m-merge">${others.map((z) => `<option value="${esc(z.id)}"${twin && z.id === twin.id ? ' selected' : ''}>${esc(z.name)}</option>`).join('')}</select></div><div class="field"><label>&nbsp;</label><button class="btn-o" data-a="merge-model" style="padding:10px">${c ? 'Pulsa otra vez' : 'Fusionar'}</button></div></div>`;
+}
+async function mergeModel(srcId, dstId) {
+  const a = model(srcId), b = model(dstId); if (!a || !b || a.id === b.id) return false;
+  for (const v of L('sales').filter((x) => x.modelId === a.id)) await db.patch(C.sales, v.id, { modelId: b.id, modelName: b.name, mergedFrom: a.name });
+  for (const l of L('listings').filter((x) => x.modelId === a.id)) await db.patch(C.listings, l.id, { modelId: b.id });
+  for (const o of L('orders').filter((x) => (x.lines || []).some((l) => l.modelId === a.id))) await db.patch(C.orders, o.id, { lines: o.lines.map((l) => (l.modelId === a.id ? { ...l, modelId: b.id, name: b.name } : l)) });
+  const p = { home: n0(b.home) + n0(a.home), transit: n0(b.transit) + n0(a.transit), alias: [b.alias, a.name].filter(Boolean).join(' · ') };
+  for (const k of ['landed', 'landedSrc', 'listPrice', 'minPrice', 'unitPrice', 'weight', 'testStart']) if ((b[k] === undefined || b[k] === null || b[k] === '') && a[k] !== undefined && a[k] !== null && a[k] !== '') p[k] = a[k];
+  if (a.status === 'ganador' && b.status !== 'descartado') p.status = 'ganador';
+  if (n0(a.base14) || n0(b.base14)) { p.base14 = n0(a.base14) + n0(b.base14); p.baseAt = [a.baseAt, b.baseAt].filter(Boolean).sort().pop(); }
+  await db.patch(C.models, b.id, p);
+  await db.remove(C.models, a.id);
+  return true;
+}
+// Unit cost from the last order of each watch: 1688 price + its share of shipping (by weight) + DHL/IVA (by value).
+const latestOrderOf = (mid) => L('orders').filter((o) => !o.draft && (o.lines || []).some((l) => l.modelId === mid)).sort((a, b) => (b.date + (b.at || '')).localeCompare(a.date + (a.at || '')))[0] || null;
+function landedFromOrder(o) {
+  const lines = (o.lines || []).map((l) => ({ modelId: l.modelId, qty: n0(l.qty), unit: n0(l.unit) }));
+  if (!lines.length || lines.some((l) => !(l.unit > 0) || !(l.qty > 0))) return null;
+  const rec = o.status === 'recibido', pq = o.pouches ? n0(o.pouches.qty) : 0, pu = o.pouches ? n0(o.pouches.unit) : 0;
+  const al = allocLanded(lines, pq, pu, n0(o.shipping), rec ? n0(o.dhl) : 0, !rec && o.lane === 'dhl');
+  const kinds = new Set(lines.map((l) => l.modelId)).size;
+  // real = nothing left to pay on arrival (DDP, or received) and shipping split by weight (or only one watch in the box)
+  al.src = (rec || o.lane !== 'dhl') && (al.byW || kinds === 1) ? 'real' : 'estimado';
+  return al;
+}
+async function recalcOrder(o) {
+  const al = o && landedFromOrder(o); if (!al) return;
+  for (const id in al.per) { const m = model(id); if (!m) continue; const lo = latestOrderOf(id); if (lo && lo.id !== o.id) continue; await db.patch(C.models, id, { landed: al.per[id].landed, landedSrc: al.src, landedOrder: o.id }); }
+}
 function readLines() {
   const c = st.sheet.ctx;
-  c.lines = c.lines.map((l, i) => ({ modelId: sv('l-m-' + i) || l.modelId, qty: sv('l-q-' + i), unit: sv('l-u-' + i), name: sheetEl.querySelector('#l-n-' + i) ? sv('l-n-' + i) : l.name }));
+  c.lines = c.lines.map((l, i) => {
+    const mid = sv('l-m-' + i) || l.modelId, changed = mid !== l.modelId;
+    if (changed) for (const k of ['l-u-', 'l-w-']) { const e = sheetEl.querySelector('#' + k + i); if (e) e.value = ''; }
+    // another watch picked on this line: its own 1688 price and weight get filled in again
+    return { modelId: mid, qty: sv('l-q-' + i), unit: changed ? '' : sv('l-u-' + i), w: changed ? '' : sheetEl.querySelector('#l-w-' + i) ? sv('l-w-' + i) : l.w, name: sheetEl.querySelector('#l-n-' + i) ? sv('l-n-' + i) : l.name };
+  });
   c.ship = sv('o-ship'); c.date = sv('o-date'); c.note = sv('o-note'); c.pq = sv('o-pq'); c.pu = sv('o-pu'); c.lane = sv('o-lane') || c.lane; c.owed = sv('o-owed');
   return c.lines;
 }
 function orderPreview() {
   const box = sheetEl.querySelector('#o-prev'); if (!box) return;
   const lines = readLines(), ship = n0(sv('o-ship')), pq = n0(sv('o-pq')), pu = n0(sv('o-pu')), pg = pq * pu, lane = sv('o-lane'), owed = n0(sv('o-owed'));
-  const ls = lines.filter((l) => n0(l.qty) && n0(l.unit)).map((l) => ({ modelId: l.modelId, qty: n0(l.qty), unit: n0(l.unit), name: l.name }));
+  const ls = lines.filter((l) => n0(l.qty) && n0(l.unit)).map((l) => ({ modelId: l.modelId, qty: n0(l.qty), unit: n0(l.unit), w: n0(l.w), name: l.name }));
   const wgoods = sum(ls.map((l) => l.qty * l.unit)), goods = wgoods + pg, units = sum(lines.map((l) => n0(l.qty)));
   const al = allocLanded(ls, pq, pu, ship, 0, lane === 'dhl'), now = goods + ship - owed, iva = lane === 'dhl' ? 0.21 * (goods + ship) : 0;
   box.innerHTML = `<div class="kv"><span class="mut">Relojes</span><b>${units} uds · ${eur(wgoods)}</b></div>${pg ? `<div class="kv"><span class="mut">Bolsitas</span><b>${pq} uds · ${eur(pg)}</b></div>` : ''}${al.byW ? `<div class="kv"><span class="mut">Peso de la caja</span><b>${(al.kg + 0.4).toFixed(2).replace('.', ',')} kg aprox.</b></div>` : ''}
@@ -1144,18 +1195,21 @@ async function saveOrder() {
     if (l.modelId === '__new' && !l.name) return shErr('Ponle nombre al reloj nuevo.');
     if (!(parseInt(l.qty, 10) > 0)) return shErr('Pon cuántas unidades de cada reloj.');
     if (!(num(l.unit) > 0)) return shErr('Pon el precio por unidad de 1688 de cada línea.');
+    if (!(num(l.w) > 0)) return shErr('Pon el peso (g, con bolsa) de cada reloj: el envío se reparte por peso.');
   }
   const out = [];
   for (const l of lines) {
     let mid = l.modelId;
     if (mid === '__new') { const m = await db.put(C.models, { name: l.name, status: 'test', home: 0, transit: 0, order: L('models').length + 1 }); mid = m.id; }
+    await db.patch(C.models, mid, { weight: Math.round(num(l.w)), unitPrice: r2(num(l.unit)) });
     const m = model(mid);
     out.push({ modelId: mid, name: m ? m.name : l.name, qty: parseInt(l.qty, 10), unit: r2(num(l.unit)) });
   }
-  const goods = r2(sum(out.map((l) => l.qty * l.unit)) + (pq ? pq * pu : 0)), sh = isNaN(ship) ? 0 : r2(ship), lane = sv('o-lane') || 'otro';
+  const goods = r2(sum(out.map((l) => l.qty * l.unit)) + (pq ? pq * pu : 0)), sh = isNaN(ship) ? 0 : r2(ship), lane = sv('o-lane') === 'dhl' ? 'dhl' : 'ddp';
   const owed = Math.min(goods + sh, Math.max(0, r2(n0(sv('o-owed'))))), al = allocLanded(out, pq, pq ? pu : 0, sh, 0, lane === 'dhl');
-  await db.put(C.orders, { date, at: nowISO(), note: sv('o-note'), lane, lines: out, pouches: pq ? { qty: pq, unit: r2(pu) } : null, goods, shipping: sh, paid: r2(goods + sh - owed), owed: r2(owed), payments: [], dhl: 0, status: 'camino' });
-  for (const id in al.per) { const m = model(id); const l = out.find((z) => z.modelId === id); await db.patch(C.models, id, { transit: n0(m && m.transit) + al.per[id].qty, landed: al.per[id].landed, unitPrice: l.unit }); }
+  const o = await db.put(C.orders, { date, at: nowISO(), note: sv('o-note'), lane, lines: out, pouches: pq ? { qty: pq, unit: r2(pu) } : null, goods, shipping: sh, paid: r2(goods + sh - owed), owed: r2(owed), payments: [], dhl: 0, status: 'camino' });
+  const lf = landedFromOrder(o);
+  for (const id in al.per) { const m = model(id); const l = out.find((z) => z.modelId === id); await db.patch(C.models, id, { transit: n0(m && m.transit) + al.per[id].qty, landed: al.per[id].landed, landedSrc: lf ? lf.src : 'estimado', landedOrder: o.id, unitPrice: l.unit }); }
   closeSheet(); st.tab = 'stock'; st.stockSeg = 'pedidos'; lsSet('lg_seg', 'pedidos'); location.hash = 'stock'; renderSoon(); toast('Pedido guardado · −' + eur(goods + sh - owed) + ' de caja' + (owed ? ' · debes ' + eur(owed) : ''));
 }
 async function saveReceive() {
@@ -1166,7 +1220,7 @@ async function saveReceive() {
   const pq = o.pouches ? n0(o.pouches.qty) : 0, pu = o.pouches ? n0(o.pouches.unit) : 0;
   const al = allocLanded((o.lines || []).map((l) => ({ modelId: l.modelId, qty: n0(l.qty), unit: n0(l.unit) })), pq, pu, n0(o.shipping), d, false);
   await db.patch(C.orders, o.id, { status: 'recibido', dhl: d, receivedDate: date, receivedAt: nowISO() });
-  for (const id in al.per) { const m = model(id); if (!m) continue; await db.patch(C.models, id, { transit: Math.max(0, n0(m.transit) - al.per[id].qty), home: n0(m.home) + al.per[id].qty, landed: al.per[id].landed }); }
+  for (const id in al.per) { const m = model(id); if (!m) continue; await db.patch(C.models, id, { transit: Math.max(0, n0(m.transit) - al.per[id].qty), home: n0(m.home) + al.per[id].qty, landed: al.per[id].landed, landedSrc: al.byW || Object.keys(al.per).length === 1 ? 'real' : 'estimado', landedOrder: o.id }); }
   if (pq) await patchSettings({ pouches: pouches() + pq, pouchCost: al.pouch });
   closeSheet(); toast('Recibido · pasado a casa');
 }
@@ -1189,9 +1243,18 @@ async function saveModel() {
   if (!name) return shErr('Ponle un nombre.');
   const opt = (v) => { const x = num(v); return isNaN(x) ? null : r2(x); };
   const data = { name, status: sv('m-status'), landed: opt(sv('m-landed')), listPrice: opt(sv('m-list')), minPrice: opt(sv('m-min')), unitPrice: opt(sv('m-unit')), weight: opt(sv('m-w')), home: Math.max(0, Math.round(n0(sv('m-home')))), transit: Math.max(0, Math.round(n0(sv('m-transit')))) };
+  const old = id ? model(id) || {} : {};
+  let note = 'Guardado';
+  if (data.status === 'ganador' && old.status !== 'ganador' && !B.proofOf({ ...old, id }, L('sales').filter((x) => !x.cancelled), L('listings')).ok) { data.status = 'test'; note = 'Guardado como Test: ganador con 1 venta o 2 ofertas'; }
+  if (id && data.landed !== null && r2(n0(old.landed)) !== data.landed) data.landedSrc = 'manual';
   if (id) await db.patch(C.models, id, data);
   else await db.put(C.models, { ...data, order: L('models').length + 1 });
-  closeSheet(); toast('Guardado');
+  // new weight or 1688 price → redo the cost split of its last order (the other watches in that box change too)
+  if (id && (n0(old.weight) !== n0(data.weight) || n0(old.unitPrice) !== n0(data.unitPrice))) {
+    const o = latestOrderOf(id);
+    if (o && data.unitPrice) { await db.patch(C.orders, o.id, { lines: o.lines.map((l) => (l.modelId === id && !(n0(l.unit) > 0) ? { ...l, unit: data.unitPrice } : l)) }); await recalcOrder(db.get(C.orders, o.id)); }
+  }
+  closeSheet(); toast(note);
 }
 async function saveSettings() {
   const cash = num(sv('s-cash')), cush = num(sv('s-cushion')), g = num(sv('s-goal'));
@@ -1328,16 +1391,23 @@ async function saveWithdraw() {
 }
 async function releaseSale(id) { const x = db.get(C.sales, id); if (x) await db.patch(C.sales, id, { released: true, releasedAt: nowISO() }); }
 function exportForClaude() {
-  const snap = agent.snapshot() || {};
-  const months = [shiftMonth(curMonth(), -2), shiftMonth(curMonth(), -1), curMonth()].map((mk) => { const p = parts(mk); return `${mk}: ${p.nSales} ventas, beneficio ${Math.round(p.net)} €, flujo ${Math.round(p.flow)} €`; });
-  const perModel = L('models').filter((m) => m.status !== 'descartado').map((m) => {
-    const ss = L('sales').filter((v) => v.modelId === m.id), d30 = ss.filter((v) => v.date >= shiftDay(todayKey(), -29));
-    return `${m.name} [${m.status}]: ${ss.length} ventas total, ${d30.length} en 30 días, precio medio ${d30.length ? Math.round(sum(d30.map((v) => n0(v.price))) / d30.length * 100) / 100 : '-'} €, coste ${costOf(m)} €${isEst(m) ? ' (estimado)' : ''}, 1688 ${m.unitPrice || '?'} €, peso ${m.weight || '?'} g`;
+  const snap = agent.snapshot() || {}, bz = brain(), e2 = (v) => (Math.round(v * 100) / 100).toFixed(2);
+  const months = [shiftMonth(curMonth(), -2), shiftMonth(curMonth(), -1), curMonth()].map((mk) => {
+    const p = parts(mk);
+    return `${mk}: ${p.nSales} ventas · beneficio ventas ${e2(p.profit)} € − gastos negocio ${e2(p.biz)} € = beneficio neto ${e2(p.net)} €` +
+      ` | banco: retirado de Vinted +${e2(p.withdraw)}, otros ingresos +${e2(p.income)}, pedidos −${e2(p.orders)}, gastos negocio −${e2(p.biz)}, gastos personales −${e2(p.pers)} = flujo ${e2(p.flow)} €`;
   });
-  const t = new Date();
+  const perModel = L('models').filter((m) => m.status !== 'descartado' || n0(m.home)).map((m) => {
+    const ss = L('sales').filter((v) => v.modelId === m.id && !v.cancelled), d30 = ss.filter((v) => v.date >= shiftDay(todayKey(), -29));
+    const r = stockOf(m.id), eff = r ? r.m.status : m.status;
+    return `${m.name} [${eff}${eff !== m.status ? ', marcado ' + m.status : ''}]: ${ss.length} ventas total, ${d30.length} en 30 días, precio medio ${d30.length ? e2(sum(d30.map((v) => n0(v.price))) / d30.length) + ' €' : '-'}, coste ${e2(costOf(m))} € (${costSrc(m)}), 1688 ${n0(m.unitPrice) ? e2(n0(m.unitPrice)) + ' €' : 'FALTA'}, peso ${n0(m.weight) ? n0(m.weight) + ' g' : 'FALTA'}, en casa ${n0(m.home)}, en camino ${n0(m.transit)}`;
+  });
+  const t = new Date(), fix = S0().migr9log || [];
   return `OOQ LEDGER · export ${todayKey()} ${pad(t.getHours())}:${pad(t.getMinutes())}\n` +
-    `Datos de mi negocio de relojes. "calculos" y "st" (estado de stock) los calcula la app. Dime los mejores movimientos de stock y números.\n\n` +
-    `MESES\n${months.join('\n')}\n\nPOR RELOJ\n${perModel.join('\n')}\n\nDATOS\n${JSON.stringify(snap)}`;
+    `Datos de mi negocio de relojes. "calculos", "st" (estado de stock) y "pedido_sugerido" los calcula la app. "e" = estado real (ganador solo con 1 venta o 2 ofertas). Dime los mejores movimientos de stock y números.\n\n` +
+    `MESES\n${months.join('\n')}\n\nPOR RELOJ\n${perModel.join('\n')}\n` +
+    (fix.length ? `\nCORRECCIONES DE DATOS (v9)\n${fix.join('\n')}\n` : '') +
+    `\nDATOS\n${JSON.stringify(snap)}`;
 }
 async function copyText(txt) {
   try { await navigator.clipboard.writeText(txt); return true; } catch {}
@@ -1364,7 +1434,7 @@ document.addEventListener('click', async (e) => {
   if (e.target === sheetEl) { closeSheet(); return; }
   const b = e.target.closest('[data-a]'); if (!b) return;
   const a = b.dataset.a, v = b.dataset.v;
-  if (a !== 'del' && a !== 'del-model' && a !== 'del-order' && a !== 'del-listing' && a !== 'chat-clear' && st.confirm) { st.confirm = null; renderSoon(); }
+  if (a !== 'del' && a !== 'del-model' && a !== 'merge-model' && a !== 'del-order' && a !== 'del-listing' && a !== 'chat-clear' && st.confirm) { st.confirm = null; renderSoon(); }
   if (SAVE[a]) {
     b.disabled = true;
     try { await SAVE[a](); } catch (err) { console.error(err); shErr('No se pudo guardar: ' + (err.message || err)); }
@@ -1435,6 +1505,7 @@ document.addEventListener('click', async (e) => {
     case 'order-model': { const r = stockOf(b.dataset.id); if (r) openOrderFor([{ modelId: r.m.id, qty: r.bridge || r.ddpQty || 10 }], r.bridge ? 'dhl' : 'ddp'); break; }
     case 'test-win': {
       const t = brain().tests.find((z) => z.m.id === b.dataset.id); if (!t) break;
+      if (t.stage !== 'ganador' && !B.proofOf(t.m, L('sales').filter((x) => !x.cancelled), L('listings')).ok) { toast('Aún no: ganador = 1 venta o 2 ofertas'); break; }
       await db.patch(C.models, t.m.id, { status: 'ganador' });
       toast('Ganador · ahora pide stock');
       openOrderFor([{ modelId: t.m.id, qty: t.firstQty }], n0(t.m.home) <= 2 ? 'dhl' : 'ddp'); break;
@@ -1469,6 +1540,13 @@ document.addEventListener('click', async (e) => {
       else { st.confirm = key; clearTimeout(del._t); del._t = setTimeout(() => { st.confirm = null; renderSoon(); }, 3500); }
       renderSoon(); break;
     }
+    case 'merge-model': {
+      const id = st.sheet.ctx.id, dst = sv('m-merge'), key = 'merge/' + id;
+      if (st.confirm === key) { st.confirm = null; const to = model(dst); if (await mergeModel(id, dst)) { closeSheet(); toast('Fusionado en ' + (to ? to.name : '')); } }
+      else { st.confirm = key; redrawSheet(); }
+      break;
+    }
+    case 'not-dupe': { const nd = S0().notDupes || []; await patchSettings({ notDupes: [...nd, b.dataset.id + '|' + v] }); toast('Vale, son distintos'); redrawSheet(); break; }
     case 'del-model': {
       const id = st.sheet.ctx.id, key = 'models/' + id;
       if (st.confirm === key) { st.confirm = null; await db.remove(C.models, id); closeSheet(); toast('Reloj borrado'); }
@@ -1565,6 +1643,35 @@ async function migrate8() {
   await patchSettings({ migr: 8, leadDDP: n0(cur.leadDDP) && n0(cur.leadDDP) !== 18 ? cur.leadDDP : 12 });
 }
 
+// v9 (one time): the 16 fixes from the export review.
+// 1) the seeded "Bronce vestir" and your "Reloj bronze" are the same watch → one model, so its 4 sales count together
+// 2) "ganador" without a sale or 2 offers → back to test   3) orders marked "otro" were DDP
+// 4) unit cost recomputed from each watch's last order (shipping by weight when weights exist), marked real/estimado
+async function migrate9() {
+  const cur = db.get(C.settings, 'settings'); if (!cur || n0(cur.migr) >= 9) return;
+  const log = [];
+  const br = model('m-bronce'), cand = L('models').filter((m) => m.id !== 'm-bronce' && m.status !== 'descartado' && /bron/i.test(m.name || ''));
+  if (br && cand.length === 1 && await mergeModel(br.id, cand[0].id)) log.push(`fusionado "${br.name}" en "${cand[0].name}"`);
+  for (const o of L('orders')) if (!o.lane || o.lane === 'otro') { await db.patch(C.orders, o.id, { lane: 'ddp' }); log.push('pedido ' + o.date + ' otro → DDP'); }
+  for (const m of L('models')) {
+    const p = {}, lo = latestOrderOf(m.id), ln = lo && lo.lines.find((l) => l.modelId === m.id);
+    if (!(n0(m.unitPrice) > 0) && ln && n0(ln.unit) > 0) p.unitPrice = n0(ln.unit);
+    if (m.status === 'ganador' && !B.proofOf(m, L('sales').filter((x) => !x.cancelled), L('listings')).ok) { p.status = 'test'; log.push(`${m.name}: ganador sin ventas → test`); }
+    if (Object.keys(p).length) await db.patch(C.models, m.id, p);
+  }
+  const os = L('orders').filter((o) => !o.draft).sort((a, b) => (a.date + (a.at || '')).localeCompare(b.date + (b.at || '')));
+  for (const o of os) {
+    const al = landedFromOrder(o); if (!al) continue;
+    for (const id in al.per) {
+      const m = model(id), lo = latestOrderOf(id); if (!m || !lo || lo.id !== o.id) continue;
+      const p = { landed: al.per[id].landed, landedSrc: al.src, landedOrder: o.id };
+      if (!isNaN(num(m.landed)) && Math.abs(num(m.landed) - p.landed) > 0.05) { p.landedOld = num(m.landed); log.push(`${m.name}: coste ${m.landed} → ${p.landed}`); }
+      await db.patch(C.models, id, p);
+    }
+  }
+  await patchSettings({ migr: 9, migr9log: log });
+}
+
 /* ---------------- login ---------------- */
 function loginView(done) {
   const email = lsGet('lg-login-email', '');
@@ -1597,6 +1704,7 @@ async function boot() {
   await migrate().catch((e) => console.warn('migrate', e));
   await migrate7().catch((e) => console.warn('migrate7', e));
   await migrate8().catch((e) => console.warn('migrate8', e));
+  await migrate9().catch((e) => console.warn('migrate9', e));
   shell(); render();
   const ta = $('#comp-text'), fi = $('#comp-file');
   ta.addEventListener('input', () => { ta.style.height = ''; ta.style.height = Math.min(140, ta.scrollHeight) + 'px'; });

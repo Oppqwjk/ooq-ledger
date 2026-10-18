@@ -152,33 +152,80 @@ export function createAgent(api) {
   }
 
   /* ---------- what the agent sees on every message ---------- */
-  // Compact on purpose: every token here is paid on every call.
+  // Every number says where it comes from. Costs with 2 decimals everywhere. Empty lists stay (an empty order = "order nothing").
   function snapshot() {
-    const bz = brain(), s = S0(), cash = api.cashNow(), mk = todayKey().slice(0, 7);
-    const r = (v, d = 1) => (v === Infinity || v === null || v === undefined || isNaN(v) ? undefined : Math.round(v * 10 ** d) / 10 ** d);
+    const bz = brain(), s = S0(), mk = todayKey().slice(0, 7), today = todayKey();
+    const r = (v, d = 2) => (v === Infinity || v === null || v === undefined || isNaN(v) ? undefined : Math.round(v * 10 ** d) / 10 ** d);
     const nextMk = (() => { const [y, m] = mk.split('-').map(Number); const d = new Date(y, m, 1); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); })();
-    const p = bz.pace;
+    const p = bz.pace, ld = bz.lead;
+    const bank = api.bankNow ? api.bankNow() : api.cashNow(), vb = api.vintedBalance ? api.vintedBalance() : 0, bills = api.pendingBills ? api.pendingBills() : 0, owed = api.owedTotal();
+    const srcOf = api.costSrc || ((m) => (isNaN(parseFloat(m.landed)) ? 'por defecto' : 'puesto a mano'));
+    const orders = L('orders').filter((o) => !o.draft);
+    const lf = api.landedFromOrder || (() => null);
+    const etaSrc = (o) => (o.eta ? 'fijada a mano' : `calculada: ${o.date} + ${(o.lane || 'ddp').toUpperCase()} ${ld[o.lane === 'dhl' ? 'dhl' : 'ddp']} días`);
+    const plan = bz.plan, lane = (k) => plan.lines.filter((l) => l.lane === k).map((l) => ({ reloj: l.m.name, uds: l.qty, coste: r(l.cost) }));
+    const nothing = plan.lines.length ? undefined : owed > 0 ? `nada: primero la deuda (${r(owed)} €)` : plan.skipped.length ? `nada: falta caja (gastable ${r(plan.cash)} €)` : 'nada: ningún ganador se queda sin stock antes de que llegue un DDP';
+    const bySale = (m) => L('sales').filter((v) => v.modelId === m.id && !v.cancelled);
     return prune({
-      hoy: todayKey(),
-      caja: { banco: r(api.bankNow ? api.bankNow() : cash, 0), saldo_vinted: r(api.vintedBalance ? api.vintedBalance() : 0, 0), pendiente_vinted: r(api.pendingVinted(), 0), deuda: r(api.owedTotal(), 0), gastable: r(api.spendable(), 0) },
-      mes: { ventas: p.S, objetivo: p.T, minimo: p.MIN, beneficio: r(p.P, 0), objetivo_beneficio: p.PT, ritmo_dia: r(p.paceDay, 2), necesita_dia: r(p.need, 2), proyeccion: p.proj, dias_quedan: p.left },
+      hoy: today,
+      caja: {
+        banco: r(bank), saldo_vinted: r(vb), pendiente_vinted: r(api.pendingVinted()), colchon: r(n0(s.cushion)), pagos_fijos_pendientes: r(bills), deuda: r(owed),
+        gastable: r(api.spendable()), formula: 'gastable = banco + saldo_vinted − colchón − pagos fijos pendientes − deuda. pendiente_vinted NO cuenta hasta que Vinted lo libere.',
+      },
+      mes: {
+        ventas: p.S, objetivo: p.T, minimo: p.MIN,
+        beneficio_ventas: r(p.P), gastos_negocio: r(p.biz), beneficio_neto: r(p.net), objetivo_beneficio: p.PT,
+        formula: 'beneficio_ventas = Σ(precio − coste del reloj − bolsita). beneficio_neto = beneficio_ventas − gastos de negocio (es el de MESES)',
+        ritmo_dia: r(p.paceDay), necesita_dia: r(p.need), proyeccion: p.proj, proyeccion_solo_ritmo: p.projDemand, limite: p.limit,
+        stock_para_el_mes: { en_casa: p.inHand, llegan_antes_de_fin_de_mes: p.landing, proxima_llegada: p.nextIn },
+        dias_quedan: p.left,
+      },
       plan: { [mk]: (s.plan || {})[mk], [nextMk]: (s.plan || {})[nextMk] },
-      calculos: bz.moves.slice(0, 8).map((m) => `[${m.tag}] ${m.title} — ${m.why}`),
-      stock: bz.stocks.filter((x) => x.m.status !== 'descartado' || x.home).map((x) => ({ reloj: x.m.name, id: x.m.id, e: x.m.status, st: x.status, casa: x.home, camino: x.transit || undefined, dia: r(x.rate, 2), v7: x.d.last7, v7prev: x.d.prev7, dias: r(x.coverAll, 0), dhl: x.bridge || undefined, ddp: x.ddpQty || undefined, coste: r(x.cost), benef: r(x.unitProfit), llega: x.arrivals.length ? x.arrivals.map((a) => `${a.qty}${a.lane} ${a.eta}`).join(',') : undefined, nota: x.why || undefined })),
-      plazos: { dhl: bz.lead.dhl, ddp: bz.lead.ddp },
-      pedido_sugerido: bz.plan.lines.map((l) => `${l.qty} ${l.m.name} ${l.lane} ${r(l.cost, 0)}€`), sin_caja: bz.plan.skipped.map((k) => `${k.want} ${k.s.m.name} ${k.lane}`),
-      tests: bz.tests.map((t) => ({ reloj: t.m.name, id: t.m.id, etapa: t.stage, h: r(t.hours, 0), vistas: t.views, favs: t.favs, ofertas: t.offers, mejor: t.best || undefined, vend: t.sold || undefined, casa: t.home, accion: t.act })),
-      ganador_ref: { favs: r(bz.bench.fav, 2), vistas_dia: r(bz.bench.vpd, 0), ofertas_100: r(bz.bench.opv, 1) },
+      calculos: bz.moves.slice(0, 10).map((m) => `[${m.tag}] ${m.title} — ${m.why}`),
+      stock: bz.stocks.filter((x) => x.m.status !== 'descartado' || x.home).map((x) => {
+        const pr = bySale(x.m), lo = x.m.landedOld;
+        return {
+          reloj: x.m.name, id: x.m.id, e: x.m.status, marcado: x.m.marked !== x.m.status ? x.m.marked : undefined, st: x.status,
+          casa: x.home, camino: x.transit, dia: r(x.rate), v7: x.d.last7, v7prev: x.d.prev7, ventas_28d: x.d.n28, dias: r(x.coverAll, 0),
+          dhl: x.bridge, ddp: x.ddpQty,
+          coste: r(x.cost), coste_fuente: srcOf(x.m), coste_antes: lo !== undefined ? r(lo) : undefined,
+          precio_1688: n0(x.m.unitPrice) || 'falta', peso_g: n0(x.m.weight) || 'falta',
+          benef: r(x.unitProfit), benef_fuente: pr.length ? `media de ${Math.min(10, pr.length)} venta${pr.length === 1 ? '' : 's'} real${pr.length === 1 ? '' : 'es'}` : x.upPrice ? `estimado: vendiendo a ${r(x.upPrice)} €` : 'sin precio de venta',
+          llega: x.arrivals.map((a) => { const o = orders.find((z) => z.id === a.id); return { uds: a.qty, via: a.lane === 'dhl' ? 'DHL' : 'DDP', eta: a.eta, eta_fuente: o ? etaSrc(o) : undefined }; }),
+          llego: x.arrived || undefined, nota: x.why || undefined,
+        };
+      }),
+      plazos: { dhl: { dias: ld.dhl, fuente: ld.dhlN ? `medido en ${ld.dhlN} pedido${ld.dhlN > 1 ? 's' : ''}` : 'por defecto' }, ddp: { dias: ld.ddp, fuente: ld.ddpN ? `medido en ${ld.ddpN} pedido${ld.ddpN > 1 ? 's' : ''}` : 'por defecto' } },
+      pedido_sugerido: { dhl: lane('dhl'), ddp: lane('ddp'), coste_total: r(plan.dhl.cost + plan.ddp.cost), caja_disponible: r(plan.cash), queda_despues: r(plan.left), resumen: nothing },
+      sin_caja: plan.skipped.length ? plan.skipped.map((k) => ({ reloj: k.s.m.name, uds: k.want, via: k.lane.toUpperCase(), coste: r(k.want * costOf(k.s.m)) })) : 'nada',
+      tests: bz.tests.map((t) => ({ reloj: t.m.name, id: t.m.id, etapa: t.stage, h: r(t.hours, 0), vistas: t.views, favs: t.favs, ofertas: t.offers, mejor: t.best || undefined, vend: t.sold || undefined, casa: t.home, camino: t.transit || undefined, accion: t.act || t.why })),
+      ganador_ref: { favs: r(bz.bench.fav), vistas_dia: r(bz.bench.vpd, 0), ofertas_100: r(bz.bench.opv, 1), fuente: bz.bench.learned ? `medido en ${bz.bench.n} stats de tus ganadores` : 'por defecto (aún no medido con tus ganadores)' },
       tests_ritmo: { semana: bz.tp.perWeek, a_la_vez: bz.benchN, corriendo: bz.running, faltan_ganadores: bz.tp.winnersNeeded },
-      cuentas: bz.acc.accs.map((a) => `${a.name}: ${a.status}/${a.health}, ${a.live.length} activos, ${a.s7} ventas 7d, ${a.rem30} retiradas 30d`),
-      ventas_recientes: L('sales').slice().sort((a, b) => (b.at || b.date).localeCompare(a.at || a.date)).slice(0, 6).map((v) => `${v.date} ${v.modelName} ${v.price}€ (+${r(v.profit, 0)})`),
-      pedidos_abiertos: L('orders').filter((o) => o.status !== 'recibido' || n0(o.owed)).map((o) => `${o.date} ${o.lane || 'otro'} ${o.status}: ${(o.lines || []).map((l) => `${l.qty}× ${l.name}`).join(', ')}${n0(o.owed) ? ` · debe ${n0(o.owed)}€` : ''}`),
-      bolsitas: pouches(),
+      cuentas: bz.acc.accs.map((a) => ({ cuenta: a.name, estado: a.status, riesgo_anuncios: a.status === 'activa' ? a.health : undefined, activos: a.live.length, ventas_7d: a.s7, retiradas_30d: a.rem30 })),
+      ventas_recientes: L('sales').filter((v) => !v.cancelled).sort((a, b) => (b.at || b.date).localeCompare(a.at || a.date)).slice(0, 8).map((v) => ({ fecha: v.date, reloj: v.modelName, precio: r(n0(v.price)), coste: r(n0(v.watchCost !== undefined ? v.watchCost : v.cost - n0(v.extra))), bolsita: r(n0(v.extra)) || undefined, beneficio: r(typeof v.profit === 'number' ? v.profit : n0(v.price) - n0(v.cost)), cuenta: v.account })),
+      ventas_sin_reloj: L('sales').filter((v) => !v.cancelled && !L('models').some((m) => m.id === v.modelId)).map((v) => `${v.date} ${v.modelName} ${v.price}€`),
+      posibles_duplicados: bz.moves.filter((m) => m.tag === 'Datos' && m.title.startsWith('¿')).map((m) => m.title),
+      pedidos: orders.filter((o) => o.status !== 'recibido' || n0(o.owed) || o.date >= todayKey().slice(0, 7) + '-01').map((o) => {
+        const watches = (o.lines || []).reduce((t, l) => t + n0(l.qty) * n0(l.unit), 0), pq = o.pouches ? n0(o.pouches.qty) : 0, pg = pq * (o.pouches ? n0(o.pouches.unit) : 0);
+        const al = lf(o), pays = (o.payments || []).reduce((t, x) => t + n0(x.amount), 0);
+        const per = al ? Object.fromEntries(Object.keys(al.per).map((id) => [(L('models').find((m) => m.id === id) || {}).name || id, r(al.per[id].landed)])) : undefined;
+        const alloc = al ? r(Object.values(al.per).reduce((t, v) => t + v.tot, 0) + al.pouch * pq) : undefined;
+        return {
+          fecha: o.date, via: o.lane === 'dhl' ? 'DHL' : 'DDP', estado: o.status, eta: o.status !== 'recibido' ? (o.eta || undefined) : undefined, recibido: o.receivedDate,
+          relojes: (o.lines || []).map((l) => `${l.qty}× ${l.name} a ${r(n0(l.unit))}`), coste_relojes: r(watches), bolsitas: pq ? `${pq} uds · ${r(pg)} €` : undefined,
+          envio: r(n0(o.shipping)), dhl_al_llegar: r(n0(o.dhl)), total: r(watches + pg + n0(o.shipping) + n0(o.dhl)),
+          pagado_al_pedir: r(n0(o.paid)), pagado_despues: r(pays), debe: r(n0(o.owed)),
+          reparto_envio: al ? (al.byW ? 'por peso' : 'por valor (faltan pesos)') : 'faltan precios 1688', coste_ud: per, coste_fuente: al ? al.src : undefined,
+          comprobacion: alloc !== undefined ? `Σ coste_ud × uds + bolsitas = ${alloc} € (total ${r(watches + pg + n0(o.shipping) + n0(o.dhl))} €${o.lane === 'dhl' && o.status !== 'recibido' ? ', incluye IVA 21% estimado' : ''})` : undefined,
+        };
+      }),
+      bolsitas: { quedan: pouches(), uso_dia: r(bz.bags ? bz.bags.perDay : 0), dias: bz.bags && bz.bags.days !== null ? r(bz.bags.days, 0) : 'sin uso reciente' },
     });
   }
+  // drops only missing values; 0 and empty lists stay so "nothing to order" is visible
   function prune(o) {
-    if (Array.isArray(o)) { const a = o.map(prune).filter((x) => x !== undefined); return a.length ? a : undefined; }
-    if (o && typeof o === 'object') { const out = {}; for (const k in o) { const v = prune(o[k]); if (v !== undefined && v !== null && v !== '') out[k] = v; } return Object.keys(out).length ? out : undefined; }
+    if (Array.isArray(o)) return o.map(prune).filter((x) => x !== undefined);
+    if (o && typeof o === 'object') { const out = {}; for (const k in o) { const v = prune(o[k]); if (v !== undefined && v !== null && v !== '') out[k] = v; } return out; }
     return o;
   }
 

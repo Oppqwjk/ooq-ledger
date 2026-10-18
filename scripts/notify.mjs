@@ -57,9 +57,9 @@ const owedTotal = () => sum(data.orders.map((o) => n0(o.owed)));
 const pendingBills = () => sum(data.bills.filter((b) => b.month <= today.slice(0, 7) && !b.paid).map((b) => n0(b.amount)));
 const spendable = () => bankNow() + vintedBalance() - n0(settings.cushion) - pendingBills() - owedTotal();
 let cache = null;
-const brain = () => cache || (cache = B.analyze({ models: data.models, sales: data.sales, orders: data.orders, listings: data.listings, settings, now: Date.now(), today, costOf, cashFree: spendable(), owed: owedTotal() }));
+const brain = () => cache || (cache = B.analyze({ models: data.models, sales: data.sales, orders: data.orders, listings: data.listings, settings, now: Date.now(), today, costOf, cashFree: spendable(), owed: owedTotal(), pouches: n0(settings.pouches), bizMonth: sum(data.spend.filter((x) => x.kind === 'negocio' && (x.date || '').startsWith(today.slice(0, 7))).map((x) => n0(x.amount))) }));
 const L = (k) => data[k] || [];
-const agent = createAgent({ db: null, C: {}, L, model: (id) => data.models.find((m) => m.id === id), S0: () => settings, brain, fresh: () => { cache = null; }, costOf, todayKey: () => today, nowISO: () => new Date().toISOString(), patchSettings: async () => {}, pouches: () => n0(settings.pouches), pouchCost: () => n0(settings.pouchCost), cashNow, bankNow, vintedBalance, pendingVinted, owedTotal, spendable });
+const agent = createAgent({ db: null, C: {}, L, model: (id) => data.models.find((m) => m.id === id), S0: () => settings, brain, fresh: () => { cache = null; }, costOf, todayKey: () => today, nowISO: () => new Date().toISOString(), patchSettings: async () => {}, pouches: () => n0(settings.pouches), pouchCost: () => n0(settings.pouchCost), cashNow, bankNow, vintedBalance, pendingVinted, owedTotal, spendable, pendingBills });
 
 /* ---------- Telegram ---------- */
 let chatId = E.TELEGRAM_CHAT_ID || stateRow.chatId;

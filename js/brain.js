@@ -45,7 +45,9 @@ export function demand(mid, sales, today, m) {
   if (!mine.length) return base;
   const dates = mine.map((s) => s.date).sort();
   const first = dates[0], lastSale = dates[dates.length - 1];
-  const from = addD(today, -27), start = first > from ? first : from, days = diffD(start, today) + 1;
+  // the clock starts when the watch was at home to sell: arrival date if it came before the first sale
+  const open = m && m._arrived && m._arrived < first ? m._arrived : first;
+  const from = addD(today, -27), start = open > from ? open : from, days = diffD(start, today) + 1;
   const counts = {}; for (const s of mine) if (s.date >= start) counts[s.date] = (counts[s.date] || 0) + 1;
   let ws = 0, wt = 0; const arr = [];
   for (let i = 0; i < days; i++) { const k = addD(start, i), c = counts[k] || 0, w = Math.pow(0.5, diffD(k, today) / 7); ws += w * c; wt += w; arr.push(c); }
@@ -63,7 +65,7 @@ export function demand(mid, sales, today, m) {
 // Learned from your own received orders per lane (last 3). Falls back until you have some.
 export function leadTimes(orders, s) {
   const def = { dhl: n0(s.leadDHL) || FALLBACK.leadDHL, ddp: n0(s.leadDDP) || FALLBACK.leadDDP };
-  def.otro = def.ddp;
+  def.otro = n0(s.leadOtro) || def.ddp; // old orders marked "otro": treated as DDP unless you set a plazo
   const out = {};
   for (const lane of ['dhl', 'ddp', 'otro']) {
     const got = orders.filter((o) => (o.lane || 'otro') === lane && o.status === 'recibido' && o.receivedDate && o.date)
@@ -91,17 +93,33 @@ export function stockFor(m, d, x) {
   const arrivals = orders.filter((o) => o.status !== 'recibido' && !o.draft && (o.lines || []).some((l) => l.modelId === m.id))
     .map((o) => ({ id: o.id, eta: etaOf(o, lead), lane: o.lane || 'otro', qty: sum((o.lines || []).filter((l) => l.modelId === m.id).map((l) => n0(l.qty))) }))
     .sort((a, b) => a.eta.localeCompare(b.eta));
-  const up = unitProfit(m, sales, costOf), cost = costOf(m);
+  const up = unitProfit(m, sales, costOf), cost = costOf(m), nSold = sales.filter((s) => s.modelId === m.id && !s.cancelled).length;
   const r = { m, rate, d, home, transit, stock, arrivals, unitProfit: up, cost, profitDay: rate * up, capital: home * cost, lead: L, leadDhl: Ld,
     coverHome: rate > 0 ? home / rate : Infinity, coverAll: rate > 0 ? stock / rate : Infinity, safety: 0, rop: 0, target: 0,
-    qty: 0, bridge: 0, ddpQty: 0, gap: 0, outDate: null, status: 'sin datos', why: '' };
+    qty: 0, bridge: 0, ddpQty: 0, gap: 0, outDate: null, status: 'sin datos', why: '',
+    upFrom: nSold ? 'ventas' : 'estimado', upPrice: nSold ? null : n0(m.listPrice) || n0(m.minPrice) || null, nSold, arrived: m._arrived || null };
+  const r0 = stockCore(m, d, x, r);
+  // only a proven winner gets restocked (1 sale or 2+ offers); a test or a watch on hold never triggers an order
+  if (m.status !== 'ganador' && r0.qty > 0) {
+    r0.qty = r0.bridge = r0.ddpQty = 0;
+    if (['rotura', 'urgente', 'pedir'].includes(r0.status)) { r0.status = 'no repone'; r0.why = m.status === 'espera' ? 'en espera → no se repone hasta que lo marques ganador' : 'aún no es ganador (1 venta o 2 ofertas) → no se repone'; }
+  }
+  return r0;
+}
+function stockCore(m, d, x, r) {
+  const { today } = x, { home, transit, stock, rate, arrivals, cost, lead: L, leadDhl: Ld } = r;
   if (m.status === 'descartado') { r.status = home > 0 ? 'liquidar' : 'fuera'; r.why = home > 0 ? `${home} uds de un reloj descartado: véndelas a precio de salida` : ''; return r; }
   const idle = d.lastSale ? diffD(d.lastSale, today) : null;
+  // nothing at home yet and too few sales: it's on the way, 0 sales is expected, the 28-day clock starts when it lands
+  if (home === 0 && transit > 0 && d.n28 < 4) { const nx = arrivals[0]; r.status = 'en camino'; r.why = `llegan ${transit} el ${fd(nx ? nx.eta : '')}${d.total ? ` · ${d.total} vendido${d.total === 1 ? '' : 's'} antes` : ''} → el ritmo se mide desde que lleguen`; return r; }
+  const since = m._arrived && diffD(m._arrived, today) < 28 ? diffD(m._arrived, today) : null;
   // too few sales to trust a rate: no order advice, just say so (a winner at 0 stock still gets a small DDP)
   if (d.n28 < 4) {
     if (home === 0 && m.status === 'ganador' && !transit) { r.status = 'rotura'; r.ddpQty = 10; r.qty = 10; r.why = `0 en casa · solo ${d.n28} venta${d.n28 === 1 ? '' : 's'} apuntada${d.n28 === 1 ? '' : 's'} en 28 días → DDP de 10 y apunta las ventas`; return r; }
     if (home > 0 && d.total > 0 && idle >= 14) { r.status = 'parado'; r.why = `${home} uds, ${idle} días sin vender · ${Math.round(home * cost)} € parados`; return r; }
-    r.status = d.total ? 'lento' : 'sin datos'; r.why = `solo ${d.n28} venta${d.n28 === 1 ? '' : 's'} apuntada${d.n28 === 1 ? '' : 's'} en 28 días: no basta para calcular`; return r;
+    r.status = d.total ? 'lento' : 'sin datos';
+    r.why = since !== null ? `llegó hace ${since} día${since === 1 ? '' : 's'} · ${d.n28} venta${d.n28 === 1 ? '' : 's'} desde entonces: aún pronto para calcular` : `solo ${d.n28} venta${d.n28 === 1 ? '' : 's'} apuntada${d.n28 === 1 ? '' : 's'} en 28 días: no basta para calcular`;
+    return r;
   }
   if (rate <= 0.02) {
     if (home > 0 && d.total > 0 && idle >= 14) { r.status = 'parado'; r.why = `${home} uds, ${idle} días sin vender · ${Math.round(home * cost)} € parados`; }
@@ -334,20 +352,61 @@ export function accountsNeeded(acc, pace) {
   return { per, perMonth, need: Math.ceil(pace.T / perMonth), have: acc.active.length };
 }
 
+/* ---------------- proof + data checks ---------------- */
+// A watch is a winner only with proof: 1 real sale, or 2+ offers on one of its listings. Without it, "ganador" is treated as a test.
+export function proofOf(m, sales, listings) {
+  const sold = sales.filter((v) => v.modelId === m.id && !v.cancelled).length + Math.round(n0(m.base14));
+  const offers = Math.max(0, ...listings.filter((l) => l.modelId === m.id).map((l) => n0((latestSnap(l) || {}).offers)));
+  return { sold, offers, ok: sold >= 1 || offers >= 2 };
+}
+export function effStatus(m, sales, listings) {
+  if (m.status !== 'ganador' && m.status !== 'test') return m.status;
+  return proofOf(m, sales, listings).ok ? 'ganador' : 'test';
+}
+const normName = (t) => String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/bronze/g, 'bronce').replace(/golden|gold|dorado/g, 'oro').replace(/silver|plateado/g, 'plata').replace(/[^a-z0-9 ]/g, ' ');
+const STOP = new Set(['reloj', 'relojes', 'watch', 'correa', 'esfera', 'vestir', 'hombre', 'mujer', 'grande', 'retro', 'con', 'the', 'and', 'de', 'del', 'la', 'el', 'y']);
+// Two active models that look like the same watch (shared key word): their sales should be merged into one.
+export function possibleDupes(models, notDupes = []) {
+  const ms = models.filter((m) => m.status !== 'descartado'), out = [], skip = new Set(notDupes);
+  const toks = (m) => new Set(normName(m.name).split(' ').filter((w) => w.length >= 4 && !STOP.has(w)));
+  for (let i = 0; i < ms.length; i++) for (let j = i + 1; j < ms.length; j++) {
+    if (skip.has(ms[i].id + '|' + ms[j].id) || skip.has(ms[j].id + '|' + ms[i].id)) continue;
+    // same watch = every key word of the shorter name is in the other one ("Reloj bronze" ⊂ "Bronce vestir · correa marrón")
+    let a = toks(ms[i]), b = toks(ms[j]); if (a.size > b.size) [a, b] = [b, a];
+    if (a.size && [...a].every((w) => b.has(w))) out.push({ a: ms[i], b: ms[j], word: [...a][0] });
+  }
+  return out;
+}
+
 /* ---------------- everything + best moves ---------------- */
 export function analyze(input) {
-  const { models, sales, orders, listings, settings, now, costOf, cashFree, owed } = input;
+  const { sales, orders, listings, settings, now, costOf, cashFree, owed } = input;
   const today = input.today;
-  const x = { ...input, today, z: FALLBACK.serviceZ, cycle: n0(settings.cycleDays) || FALLBACK.cycleDays };
+  // when each watch first landed at home (start of its sales clock)
+  const arrivedOf = {};
+  for (const o of orders) if (o.status === 'recibido' && o.receivedDate) for (const l of o.lines || []) if (!arrivedOf[l.modelId] || o.receivedDate < arrivedOf[l.modelId]) arrivedOf[l.modelId] = o.receivedDate;
+  // engine works on the EFFECTIVE status: "ganador" without proof counts as a test
+  const models = input.models.map((m) => ({ ...m, marked: m.status, status: effStatus(m, sales, listings), _arrived: arrivedOf[m.id] || null }));
+  const x = { ...input, models, today, z: FALLBACK.serviceZ, cycle: n0(settings.cycleDays) || FALLBACK.cycleDays };
   x.lead = leadTimes(orders, settings);
   x.bench = benchmarks(listings, models);
   const live = models.filter((m) => m.status !== 'descartado' || n0(m.home) > 0);
   const stocks = live.map((m) => stockFor(m, demand(m.id, sales, today, m), x));
-  const tests = models.filter((m) => m.status === 'test').map((m) => testFor(m, x));
+  const tests = models.filter((m) => m.status === 'test' || m.marked === 'test').map((m) => testFor(m, x));
   const acc = accountsFor(x);
   const dist = distribution(x, acc, stocks);
   const stale = staleListings(x);
   const pace = paceFor(x);
+  // projection can't beat the stock you'll have: units at home + what lands before month end
+  {
+    const end = pace.mk + '-' + String(pace.dim).padStart(2, '0');
+    const inHand = sum(stocks.map((s) => s.home)), landing = sum(stocks.flatMap((s) => s.arrivals.filter((a) => a.eta <= end).map((a) => a.qty)));
+    const nextIn = stocks.flatMap((s) => s.arrivals).map((a) => a.eta).sort()[0] || null;
+    pace.projDemand = pace.proj; pace.inHand = inHand; pace.landing = landing; pace.nextIn = nextIn; pace.cap = pace.S + inHand + landing;
+    pace.limit = pace.cap < pace.proj ? 'stock' : 'ritmo';
+    if (pace.limit === 'stock') { pace.proj = pace.cap; pace.ok = pace.T ? pace.proj >= pace.T : null; pace.minOk = pace.MIN ? pace.proj >= pace.MIN : null; }
+    pace.biz = n0(input.bizMonth); pace.net = pace.P - pace.biz;
+  }
   const need = accountsNeeded(acc, pace);
   const plan = orderPlan(stocks, cashFree, costOf);
   const tp = testPace({ stocks, pace, settings, models });
@@ -357,6 +416,15 @@ export function analyze(input) {
   const logged14 = sales.filter((v) => v.date >= addD(today, -13)).length;
   const based = models.some((m) => m.baseAt && diffD(m.baseAt, today) <= 27);
   if (logged14 < 10 && !based) add(99, 'Datos', `Solo veo ${logged14} venta${logged14 === 1 ? '' : 's'} en 14 días`, 'si vendes más, ponme al día (2 min) o todo lo que te digo sale de casi nada', { a: 'catchup' });
+  for (const dp of possibleDupes(models, settings.notDupes || [])) add(97, 'Datos', `¿${dp.a.name} y ${dp.b.name} son el mismo reloj?`, 'las ventas de uno no cuentan para el stock del otro → si es el mismo, fusiónalos (Stock → reloj → Fusionar)', { a: 'model', id: dp.a.id });
+  const orphan = sales.filter((v) => !v.cancelled && !input.models.some((m) => m.id === v.modelId)).length;
+  if (orphan) add(96, 'Datos', `${orphan} venta${orphan === 1 ? '' : 's'} sin reloj`, 'su reloj ya no existe → no cuentan para ningún stock', { a: 'tab', v: 'calendario' });
+  const noSpec = models.filter((m) => m.status !== 'descartado' && (n0(m.home) || n0(m.transit)) && (!(n0(m.unitPrice) > 0) || !(n0(m.weight) > 0)));
+  if (noSpec.length) add(84, 'Datos', `Faltan precio 1688 o peso en ${noSpec.length} reloj${noSpec.length === 1 ? '' : 'es'}`, `${noSpec.map((m) => m.name).join(', ')} → sin peso el envío se reparte por valor y el coste real sale mal`, { a: 'model', id: noSpec[0].id });
+  // bags: pouch sales of the last 14 days → how many days the pouches last
+  const pRate = sales.filter((v) => v.pouch && v.date >= addD(today, -13) && v.date <= today).length / 14, pLeft = n0(input.pouches);
+  const bags = { left: pLeft, perDay: pRate, days: pRate > 0 ? pLeft / pRate : null };
+  if (pRate > 0 && pLeft / pRate < 7) add(pLeft ? 76 : 83, 'Stock', pLeft ? `Bolsitas: quedan ${pLeft} (${Math.floor(pLeft / pRate)} días)` : 'Bolsitas: 0', `gastas ${(pRate * 7).toFixed(1).replace('.', ',')} a la semana → mételas en el próximo pedido`, { a: 'settings' });
   if (owed > 0) add(95, 'Deuda', `Paga ${Math.round(owed)} € que debes`, 'deuda primero: nada nuevo se compra hasta pagarla', { a: 'goto-orders' });
   for (const s of stocks) {
     if (s.status === 'rotura' && !s.transit) add(94, 'Stock', `${s.m.name}: sin stock`, s.why, { a: 'goto-plan' });
@@ -373,7 +441,7 @@ export function analyze(input) {
     else if (t.stage === 'datos') add(85, 'Datos', `${t.m.name}: faltan stats del test`, `${t.why} → sin vistas, favs y ofertas no hay veredicto`, { a: 'test', id: t.m.id });
   }
   const running = tests.filter((t) => t.ls.length && !['ganador', 'muerto'].includes(t.stage)).length;
-  if (pace.T && pace.ok === false) add(60, 'Ritmo', `Necesitas ${pace.need.toFixed(1)} ventas/día`, `vas a ${pace.paceDay.toFixed(1)}/día → acabas en ~${pace.proj} de ${pace.T}`, { a: 'tab', v: 'metas' });
+  if (pace.T && pace.ok === false) add(60, 'Ritmo', `Necesitas ${pace.need.toFixed(1)} ventas/día`, pace.limit === 'stock' ? `el límite es el stock: ${pace.inHand} en casa + ${pace.landing} que llegan este mes → máx. ${pace.cap} de ${pace.T}` : `vas a ${pace.paceDay.toFixed(1)}/día → acabas en ~${pace.proj} de ${pace.T}`, { a: 'tab', v: 'metas' });
   moves.sort((a, b) => b.p - a.p);
-  return { x, lead: x.lead, bench: x.bench, stocks, tests, acc, dist, stale, pace, need, plan, moves, running, benchN, tp };
+  return { x, lead: x.lead, bench: x.bench, stocks, tests, acc, dist, stale, pace, need, plan, moves, running, benchN, tp, bags, models };
 }

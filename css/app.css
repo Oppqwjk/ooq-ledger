@@ -215,7 +215,7 @@ table.xl { width: 100%; border-collapse: collapse; }
 .field input, .field select, .sheet-panel input:not([type=checkbox]):not(.cell) { width: 100%; background: var(--head); border: 1.5px solid transparent; border-radius: 12px; padding: 11px 13px; font-size: 16px; min-width: 0; font-variant-numeric: tabular-nums; transition: border-color .12s, background .12s; }
 .field input:focus, .field select:focus, .sheet-panel input:focus { border-color: var(--accent); background: var(--sheet); outline: none; }
 .fields2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.line-ed { display: grid; grid-template-columns: minmax(0, 1fr) 62px 80px 30px; gap: 6px; align-items: end; }
+.line-ed { display: grid; grid-template-columns: minmax(0, 1fr) 56px 72px 60px 30px; gap: 6px; align-items: end; }
 .line-ed input, .line-ed select { padding: 9px 8px; font-size: 15px; }
 .hint { font-size: 12.5px; color: var(--muted); }
 .check { display: flex; gap: 10px; align-items: center; font-size: 14.5px; font-weight: 500; }
@@ -389,7 +389,7 @@ body.chatmode { padding-bottom: calc(190px + env(safe-area-inset-bottom, 0px)); 
   .fields3 { grid-template-columns: 1fr 1fr; }
   .fields3 .field:last-child { grid-column: 1 / -1; }
   .fields4 { grid-template-columns: 1fr 1fr; }
-  .line-ed { grid-template-columns: minmax(0, 1fr) 54px 70px 28px; }
+  .line-ed { grid-template-columns: minmax(0, 1fr) 48px 62px 52px 26px; }
   .mile-track { margin-left: 14px; margin-right: 14px; }
   .ms span { font-size: 10.5px; }
   .ms i { width: 26px; height: 26px; }
