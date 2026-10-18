@@ -18,6 +18,7 @@
   --neg: #b3261e;
   --neg-cell: #f7dcd8;
   --warn: #9a6400;
+  --blu: #1f5f99;
   --sel: #1d6b44;
   --f: "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
   --f-num: "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif;
@@ -40,6 +41,7 @@
   --neg: #f08a7c;
   --neg-cell: #3a2421;
   --warn: #e0b55a;
+  --blu: #8ab8ec;
   --sel: #6fd19c;
   color-scheme: dark;
 }
@@ -185,8 +187,8 @@ table.xl { width: 100%; border-collapse: collapse; table-layout: auto; }
 
 /* bottom sheet tabs (phone) */
 .tabbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; background: var(--head); border-top: 1px solid var(--grid);
-  padding: 0 max(4px, env(safe-area-inset-right, 0px)) env(safe-area-inset-bottom, 0px) max(4px, env(safe-area-inset-left, 0px)); display: grid; grid-template-columns: repeat(5, 1fr); }
-.tabbar button { background: none; border: 0; border-right: 1px solid var(--grid); padding: 13px 2px 14px; color: var(--muted); font-size: 12.5px; font-weight: 600; position: relative; }
+  padding: 0 max(4px, env(safe-area-inset-right, 0px)) env(safe-area-inset-bottom, 0px) max(4px, env(safe-area-inset-left, 0px)); display: grid; grid-template-columns: repeat(6, 1fr); }
+.tabbar button { background: none; border: 0; border-right: 1px solid var(--grid); padding: 13px 1px 14px; color: var(--muted); font-size: 12px; font-weight: 600; position: relative; }
 .tabbar button:last-child { border-right: 0; }
 .tabbar button[aria-pressed="true"] { background: var(--sheet); color: var(--accent); font-weight: 700; }
 :root[data-theme="dark"] .tabbar button[aria-pressed="true"] { color: var(--sel); }
@@ -251,3 +253,24 @@ table.xl { width: 100%; border-collapse: collapse; table-layout: auto; }
   .sheet-head { border-radius: 6px 6px 0 0; }
   .day { min-height: 64px; }
 }
+
+/* OOQ Manager */
+.pbar.won i { background: var(--accent-hi); }
+.moves td.mi { width: 30px; color: var(--faint); font-weight: 700; vertical-align: top; padding-top: 9px; }
+.moves td b { font-weight: 600; }
+.tag { display: inline-block; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; padding: 1px 5px; border: 1px solid currentColor; border-radius: 2px; vertical-align: 1px; margin-right: 2px; }
+.tag.neg { color: var(--neg); } .tag.acc { color: var(--accent); } .tag.warn { color: var(--warn); } .tag.blu { color: var(--blu); } .tag.mut { color: var(--muted); }
+:root[data-theme="dark"] .tag.acc { color: var(--sel); }
+.verdict { border: 1px solid var(--grid); border-left: 4px solid var(--faint); background: var(--head); padding: 9px 11px; display: grid; gap: 2px; font-size: 13.5px; }
+.verdict b { font-size: 15px; }
+.verdict .act { font-weight: 600; }
+.verdict.pos { border-left-color: var(--accent); } .verdict.pos b { color: var(--accent); }
+.verdict.neg { border-left-color: var(--neg); } .verdict.neg b { color: var(--neg); }
+.verdict.warn { border-left-color: var(--warn); } .verdict.warn b { color: var(--warn); }
+:root[data-theme="dark"] .verdict.pos b { color: var(--sel); }
+.fields4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.fields4 input { padding: 9px 7px !important; }
+.btnrow { display: flex; gap: 6px; flex-wrap: wrap; }
+.xl input.cell { width: 100%; min-width: 52px; border: 1px solid var(--grid); background: var(--sheet); padding: 6px 6px; font-size: 15px; text-align: right; border-radius: 2px; font-variant-numeric: tabular-nums; }
+.xl td.x .cellbtn { white-space: nowrap; }
+@media (max-width: 380px) { .tabbar button { font-size: 11.5px; } .fields4 { grid-template-columns: 1fr 1fr; } }

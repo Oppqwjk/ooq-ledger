@@ -1,8 +1,8 @@
 // Offline cache. Bump VERSION on every deploy so installed apps pick up new files.
-const VERSION = 'ledger-v5';
+const VERSION = 'ledger-v6';
 const SHELL = [
   './', './index.html', './config.js', './manifest.webmanifest', './css/app.css',
-  './js/app.js', './js/db.js', './js/sync.js', './js/loader.js', './vendor/supabase.js',
+  './js/app.js', './js/brain.js', './js/db.js', './js/sync.js', './js/loader.js', './vendor/supabase.js',
   './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png',
 ];
 const CDN_HOSTS = ['fonts.googleapis.com', 'fonts.gstatic.com'];
