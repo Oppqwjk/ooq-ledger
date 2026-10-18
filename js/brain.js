@@ -20,7 +20,7 @@ const fd = (k) => (k ? Number(k.slice(8)) + ' ' + MS[Number(k.slice(5, 7)) - 1] 
 
 // Fallbacks used only until your own history replaces them.
 export const FALLBACK = {
-  leadDHL: 7, leadDDP: 18,          // days from paying to having it at home
+  leadDHL: 7, leadDDP: 12,          // days from paying to having it at home
   fav: 0.15, vpd: 15, opv: 3,       // test benchmarks: favourites/views, views per day, offers per 100 views
   cycleDays: 30,                    // a DDP order covers this many days of sales
   serviceZ: 1.28,                   // safety stock for ~90% of demand swings

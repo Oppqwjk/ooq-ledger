@@ -233,6 +233,7 @@ function shell() {
     ${sync.configured() ? '' : '<div class="wrap"><div class="banner">Modo local: los datos solo están en este dispositivo.</div></div>'}
     <main id="main" class="wrap"></main>
     <button class="fab" data-a="add" aria-label="Añadir">+</button>
+    <div class="ctip" id="ctip" hidden></div>
     <div class="composer" id="composer" hidden><div class="wrap comp-in">
       <div class="comp-imgs" id="comp-imgs"></div>
       <div class="comp-row"><label class="comp-cam" aria-label="Adjuntar captura"><input type="file" accept="image/*" id="comp-file" multiple hidden><svg viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg></label>
@@ -282,6 +283,66 @@ const mnav = () => `<div class="mnav"><button data-a="mprev" aria-label="Mes ant
 const empty = (t) => `<div class="empty">${t}</div>`;
 const xbtn = (col, id) => { const c = st.confirm === col + '/' + id; return `<button class="del${c ? ' confirm' : ''}" data-a="del" data-col="${col}" data-id="${esc(id)}" aria-label="Borrar">${c ? '¿Borrar?' : '×'}</button>`; };
 
+/* ---------------- charts (SVG, hover/tap shows the detail) ---------------- */
+const bar = (x, y0, w, y1, r = 4) => { // rounded on the data end, flat on the baseline
+  const up = y1 < y0, h = Math.abs(y1 - y0), rr = Math.min(r, h, w / 2);
+  if (h < 0.5) return '';
+  return up ? `M${x} ${y0}V${y1 + rr}Q${x} ${y1} ${x + rr} ${y1}H${x + w - rr}Q${x + w} ${y1} ${x + w} ${y1 + rr}V${y0}Z`
+    : `M${x} ${y0}V${y1 - rr}Q${x} ${y1} ${x + rr} ${y1}H${x + w - rr}Q${x + w} ${y1} ${x + w} ${y1 - rr}V${y0}Z`;
+};
+const niceMax = (v) => { if (v <= 0) return 1; const p = Math.pow(10, Math.floor(Math.log10(v))), n = v / p; return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * p; };
+const kfmt = (v) => (Math.abs(v) >= 1000 ? (v / 1000).toFixed(v % 1000 ? 1 : 0).replace('.', ',') + 'k' : String(Math.round(v)));
+function monthsChart() {
+  const cm = curMonth(), plan = S0().plan || {};
+  const first = monthRange()[0] || cm, ms = [];
+  for (let m = shiftMonth(cm, -5) < first ? first : shiftMonth(cm, -5); m <= shiftMonth(cm, 2); m = shiftMonth(m, 1)) ms.push(m);
+  const rows = ms.map((mk) => ({ mk, v: mk <= cm ? parts(mk).net : null, plan: plan[mk] ? n0(plan[mk].profit) : null }));
+  const W = 340, H = 190, L0 = 34, R0 = 6, T0 = 12, B0 = 24, iw = W - L0 - R0, ih = H - T0 - B0;
+  const hi = niceMax(Math.max(1, ...rows.map((r) => Math.max(r.v || 0, r.plan || 0)))), lo = Math.min(0, ...rows.map((r) => r.v || 0));
+  const y = (v) => T0 + (hi - v) / (hi - lo) * ih, band = iw / rows.length, bw = Math.min(26, band * 0.56);
+  let g = '';
+  for (let i = 0; i <= 4; i++) { const v = lo + (hi - lo) * i / 4, yy = y(v); g += `<line class="c-grid" x1="${L0}" x2="${W - R0}" y1="${yy}" y2="${yy}"/><text class="c-yt" x="${L0 - 6}" y="${yy + 3.5}" text-anchor="end">${kfmt(v)}</text>`; }
+  const cols = rows.map((r, i) => {
+    const cx = L0 + band * i + band / 2, x = cx - bw / 2, cur = r.mk === cm;
+    const b = r.v !== null ? `<path class="c-bar${r.v < 0 ? ' neg' : ''}${cur ? ' cur' : ''}" d="${bar(x, y(0), bw, y(r.v))}"/>` : '';
+    const pl = r.plan !== null ? `<line class="c-plan" x1="${cx - band * 0.4}" x2="${cx + band * 0.4}" y1="${y(r.plan)}" y2="${y(r.plan)}"/>` : '';
+    const lbl = cur && r.v !== null ? `<text class="c-val" x="${cx}" y="${Math.min(y(r.v), y(0)) - 6}" text-anchor="middle">${kfmt(r.v)}</text>` : '';
+    const tip = `${MSHORT[pm(r.mk).m - 1]} ${String(pm(r.mk).y).slice(2)} · ${r.v !== null ? 'beneficio ' + eur(r.v, true) : 'aún no'}${r.plan !== null ? ' · plan ' + eur(r.plan) : ''}`;
+    return `<g class="c-col" data-tip="${esc(tip)}"><rect class="c-hit" x="${L0 + band * i}" y="${T0}" width="${band}" height="${ih}"/>${b}${pl}${lbl}<text class="c-xt${cur ? ' cur' : ''}" x="${cx}" y="${H - 7}" text-anchor="middle">${MSHORT[pm(r.mk).m - 1]}</text></g>`;
+  }).join('');
+  return `<div class="chart"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Beneficio por mes frente al plan">${g}<line class="c-base" x1="${L0}" x2="${W - R0}" y1="${y(0)}" y2="${y(0)}"/>${cols}</svg>
+    <div class="legend"><span><i class="lg-bar"></i>Beneficio</span><span><i class="l2"></i>Plan</span></div></div>`;
+}
+function dailyChart() {
+  const t = todayKey(), days = Array.from({ length: 30 }, (_, i) => shiftDay(t, i - 29));
+  const rows = days.map((k) => { const ss = L('sales').filter((v) => v.date === k && !v.cancelled); return { k, n: ss.length, pr: sum(ss.map(profitOf)) }; });
+  const avg = rows.map((_, i) => { const w = rows.slice(Math.max(0, i - 6), i + 1); return sum(w.map((r) => r.n)) / w.length; });
+  const W = 340, H = 160, L0 = 26, R0 = 6, T0 = 10, B0 = 22, iw = W - L0 - R0, ih = H - T0 - B0;
+  const hi = Math.max(2, Math.ceil(Math.max(...rows.map((r) => r.n)))), y = (v) => T0 + (hi - v) / hi * ih, band = iw / rows.length, bw = Math.max(3, band - 2);
+  let g = ''; const step = hi <= 4 ? 1 : Math.ceil(hi / 4);
+  for (let v = 0; v <= hi; v += step) g += `<line class="c-grid" x1="${L0}" x2="${W - R0}" y1="${y(v)}" y2="${y(v)}"/><text class="c-yt" x="${L0 - 6}" y="${y(v) + 3.5}" text-anchor="end">${v}</text>`;
+  const cols = rows.map((r, i) => { const x = L0 + band * i + (band - bw) / 2; const d = dateOf(r.k);
+    return `<g class="c-col" data-tip="${esc(`${d.getDate()} ${MSHORT[d.getMonth()]} · ${r.n} venta${r.n === 1 ? '' : 's'}${r.n ? ' · ' + eur(r.pr, true) : ''} · media 7d ${avg[i].toFixed(1).replace('.', ',')}`)}"><rect class="c-hit" x="${L0 + band * i}" y="${T0}" width="${band}" height="${ih}"/>${r.n ? `<path class="c-bar${r.k === t ? ' cur' : ''}" d="${bar(x, y(0), bw, y(r.n), 2)}"/>` : ''}${i % 7 === 2 || i === 29 ? `<text class="c-xt${r.k === t ? ' cur' : ''}" x="${L0 + band * i + band / 2}" y="${H - 6}" text-anchor="middle">${d.getDate()} ${MSHORT[d.getMonth()]}</text>` : ''}</g>`; }).join('');
+  const line = avg.map((v, i) => `${i ? 'L' : 'M'}${(L0 + band * i + band / 2).toFixed(1)} ${y(v).toFixed(1)}`).join('');
+  const tot = sum(rows.map((r) => r.n)), last7 = sum(rows.slice(-7).map((r) => r.n));
+  return `<div class="chart"><div class="c-kpi"><b>${tot}</b><span>ventas en 30 días · ${last7} esta semana · ${rate1(last7 / 7)}/día</span></div><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Ventas por día, últimos 30 días">${g}<line class="c-base" x1="${L0}" x2="${W - R0}" y1="${y(0)}" y2="${y(0)}"/>${cols}<path class="c-line" d="${line}"/></svg>
+    <div class="legend"><span><i class="lg-bar"></i>Ventas del día</span><span><i class="l1 lg-line"></i>Media 7 días</span></div></div>`;
+}
+function stockChart() {
+  const bz = brain(), L_ = bz.lead.ddp, Ld = bz.lead.dhl;
+  const rows = bz.stocks.filter((r) => r.m.status !== 'descartado' && r.rate > 0.02 && !['lento', 'sin datos'].includes(r.status)).sort((a, b) => a.coverAll - b.coverAll).slice(0, 10);
+  if (!rows.length) return empty('Aún no hay ventas suficientes para calcular días de stock.');
+  const W = 340, rowH = 38, T0 = 18, L0 = 4, R0 = 44, H = T0 + rows.length * rowH + 6, cap = Math.max(30, L_ * 2.5), iw = W - L0 - R0;
+  const x = (v) => L0 + Math.min(v, cap) / cap * iw;
+  const refs = `<line class="c-ref" x1="${x(L_)}" x2="${x(L_)}" y1="${T0 - 6}" y2="${H - 4}"/><text class="c-reft" x="${x(L_)}" y="${T0 - 8}" text-anchor="middle">DDP ${L_}d</text><line class="c-ref dhl" x1="${x(Ld)}" x2="${x(Ld)}" y1="${T0 - 6}" y2="${H - 4}"/><text class="c-reft" x="${x(Ld)}" y="${T0 - 8}" text-anchor="middle">DHL ${Ld}d</text>`;
+  const bars = rows.map((r, i) => {
+    const y0 = T0 + i * rowH, d = r.coverAll, low = d < L_, w = Math.max(3, x(d) - L0), name = r.m.name.length > 34 ? r.m.name.slice(0, 33) + '…' : r.m.name;
+    const tip = `${r.m.name} · ${days1(d)} días de stock · ${r.home} en casa${r.transit ? ' + ' + r.transit + ' en camino' : ''} · ${rate1(r.rate)}/día${r.qty ? ' · pedir ' + (r.bridge ? 'DHL ' + r.bridge + ' ' : '') + (r.ddpQty ? 'DDP ' + r.ddpQty : '') : ''}`;
+    return `<g class="c-col" data-tip="${esc(tip)}" data-a="model" data-id="${esc(r.m.id)}"><rect class="c-hit" x="0" y="${y0}" width="${W}" height="${rowH}"/><text class="c-name" x="${L0}" y="${y0 + 12}">${esc(name)}</text><path class="c-bar h${low ? ' warn' : ''}" d="M${L0} ${y0 + 18}H${L0 + w - 4}Q${L0 + w} ${y0 + 18} ${L0 + w} ${y0 + 22}V${y0 + 26}Q${L0 + w} ${y0 + 30} ${L0 + w - 4} ${y0 + 30}H${L0}Z"/><text class="c-hv${low ? ' warn' : ''}" x="${L0 + w + 6}" y="${y0 + 28}">${d === Infinity ? '∞' : d >= cap ? Math.round(cap) + '+' : Math.floor(d)}d${low ? ' · pide' : ''}</text></g>`;
+  }).join('');
+  return `<div class="chart"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Días de stock por reloj frente a lo que tarda un pedido">${refs}${bars}</svg>
+    <div class="legend"><span><i class="lg-bar"></i>Aguanta más que un DDP</span><span><i class="lg-bar warn"></i>Se acaba antes de que llegue un DDP</span></div></div>`;
+}
 function spark(mk) {
   const n = daysIn(mk), g = goalFor(mk), cm = curMonth();
   const last = mk === cm ? new Date().getDate() : mk < cm ? n : 0;
@@ -414,7 +475,7 @@ function viewHome() {
   }).join('')}</tbody></table>` : empty('Nada pendiente. Al apuntar un pedido verás aquí cuánto te falta para recuperarlo.'), '<button class="lnk" data-a="goto-orders">Ver todos</button>');
   const gs = L('goals').slice().sort((a, b) => n0(a.order) - n0(b.order));
   const goals = gs.length ? panel('Metas', goalsTable(gs, true), '<button class="lnk" data-a="tab" data-v="metas">Ver</button>') : '';
-  return `<div class="cols"><div class="col">${milestonesCard()}${moves}${paceBlock()}</div><div class="col">${caja}${exp}${month}${orders}${goals}</div></div>`;
+  return `<div class="cols"><div class="col">${milestonesCard()}${moves}${paceBlock()}</div><div class="col">${caja}${panel('Beneficio por mes', monthsChart(), 'vs plan')}${exp}${month}${orders}${goals}</div></div>`;
 }
 function orderBody(o, pb) {
   const cost = pb.cost, rec = pb.rev, pct = cost ? Math.min(1, rec / cost) : 0, gap = cost - rec;
@@ -440,8 +501,8 @@ function orderBody(o, pb) {
 function viewCal() {
   const mk = st.month, p = parts(mk), mode = st.calMode;
   return `<div class="toolbar">${mnav()}<div class="seg sm"><button data-a="calmode" data-v="profit" aria-pressed="${mode === 'profit'}">Beneficio</button><button data-a="calmode" data-v="cash" aria-pressed="${mode === 'cash'}">Caja</button><button data-a="calmode" data-v="units" aria-pressed="${mode === 'units'}">Ventas</button></div></div>
-    <div class="cols wide"><div class="col">${panel(mode === 'profit' ? 'Beneficio por día' : mode === 'units' ? 'Relojes vendidos por día' : 'Banco: lo que entra − sale por día', calGrid(mk))}${panel('Total del mes', monthTable(mk))}</div>
-    <div class="col">${dayPanel()}${mode === 'profit' ? panel('Acumulado', spark(mk)) : ''}</div></div>`;
+    <div class="cols wide"><div class="col">${panel(mode === 'profit' ? 'Beneficio por día' : mode === 'units' ? 'Relojes vendidos por día' : 'Banco: lo que entra − sale por día', calGrid(mk))}${panel('Ventas · últimos 30 días', dailyChart())}${panel('Total del mes', monthTable(mk))}</div>
+    <div class="col">${dayPanel()}${panel('Beneficio por mes', monthsChart(), 'vs plan')}${mode === 'profit' ? panel('Acumulado del mes', spark(mk)) : ''}</div></div>`;
 }
 function dayVal(k) { const p = parts(k); return st.calMode === 'profit' ? p.net : st.calMode === 'units' ? p.nSales : p.flow; }
 const calTxt = (v) => (st.calMode === 'units' ? String(v) : short(v));
@@ -528,7 +589,7 @@ function viewStock() {
   const al = alerts.length ? `<table class="xl list"><tbody>${alerts.map((r) => `<tr class="click" data-a="model" data-id="${esc(r.m.id)}"><td>${esc(r.m.name)}<span class="sub">${stockBadge(r)} · ${esc(r.why)}</span></td></tr>`).join('')}</tbody></table><div class="foot"><button class="lnk" data-a="seg" data-v="plan">Ver qué pedir con tu caja</button></div>` : empty('Todo el stock aguanta. Nada que pedir hoy.');
   return `<div class="toolbar">${seg}<span style="display:flex;gap:6px"><button class="btn-o" data-a="catchup">Ponerme al día</button><button class="btn-g" data-a="model">+ Reloj</button></span></div>
     <div class="cols wide"><div class="col">${panel('Relojes', `<div class="filters">${chips}</div>` + table)}</div>
-    <div class="col">${panel('Alertas de stock', al, alerts.length ? String(alerts.length) : '')}${panel('Resumen', sumT)}</div></div>`;
+    <div class="col">${panel('Días de stock', stockChart(), 'toca uno')}${panel('Alertas de stock', al, alerts.length ? String(alerts.length) : '')}${panel('Resumen', sumT)}</div></div>`;
 }
 function viewPlan(seg, bz) {
   const pl = bz.plan, ld = bz.lead;
@@ -1485,6 +1546,25 @@ async function migrate7() {
   await patchSettings({ migr: 7, vbal: cur.vbal || {}, vbalAt: cur.vbalAt || nowISO() });
 }
 
+// v8 (one time): DDP takes 12 days; add the 2 sales missing vs Vinted (Poedagar 14,40 € and the y2kwatches one of 52 €, 14 oct) and fix the bronze 34,95 → 34,90.
+async function migrate8() {
+  const cur = db.get(C.settings, 'settings'); if (!cur || n0(cur.migr) >= 8) return;
+  const accs = cur.accounts || [], tic = accs.find((a) => /tictac/i.test(a)) || accs[0], y2k = accs.find((a) => /y2k/i.test(a));
+  const sales = L('sales'), models = L('models');
+  const mkSale = (m, price, acc, note) => ({ date: '2026-10-14', at: '2026-10-14T12:00:00.000Z', modelId: m.id, modelName: m.name, price, cost: r2(costOf(m)), watchCost: r2(costOf(m)), extra: 0, estimated: isEst(m), profit: r2(price - costOf(m)), account: acc, fromStock: false, released: false, releasedAt: null, note });
+  if (!sales.some((x) => /poedagar/i.test(x.modelName || ''))) {
+    const m = models.find((z) => /poedagar/i.test(z.name)) || await db.put(C.models, { name: 'Poedagar verde', status: 'espera', home: 0, transit: 0, listPrice: 34.95, order: models.length + 1 });
+    await db.put(C.sales, mkSale(m, 14.4, tic, 'añadida para cuadrar con Vinted'));
+  }
+  if (y2k && !sales.some((x) => x.account === y2k && x.date === '2026-10-14')) {
+    const m = models.find((z) => z.id === 'm-sinesp') || await db.put(C.models, { id: 'm-sinesp', name: 'Reloj sin especificar', status: 'descartado', home: 0, transit: 0, order: models.length + 2 });
+    await db.put(C.sales, mkSale(m, 52, y2k, 'añadida para cuadrar con Vinted · dime qué reloj era'));
+  }
+  const br = sales.find((x) => n0(x.price) === 34.95 && /bron/i.test(x.modelName || ''));
+  if (br) await db.patch(C.sales, br.id, { price: 34.9, profit: r2(n0(br.profit) - 0.05) });
+  await patchSettings({ migr: 8, leadDDP: n0(cur.leadDDP) && n0(cur.leadDDP) !== 18 ? cur.leadDDP : 12 });
+}
+
 /* ---------------- login ---------------- */
 function loginView(done) {
   const email = lsGet('lg-login-email', '');
@@ -1516,12 +1596,18 @@ async function boot() {
   await seedIfEmpty();
   await migrate().catch((e) => console.warn('migrate', e));
   await migrate7().catch((e) => console.warn('migrate7', e));
+  await migrate8().catch((e) => console.warn('migrate8', e));
   shell(); render();
   const ta = $('#comp-text'), fi = $('#comp-file');
   ta.addEventListener('input', () => { ta.style.height = ''; ta.style.height = Math.min(140, ta.scrollHeight) + 'px'; });
   ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && window.matchMedia('(min-width: 900px)').matches) { e.preventDefault(); chatSend(); } });
   fi.addEventListener('change', async () => { for (const f of [...fi.files].slice(0, 4)) { try { st.chatImgs.push(await readImage(f)); } catch {} } fi.value = ''; drawImgs(); });
   db.subscribe(() => renderSoon());
+  const tip = $('#ctip'); let tipT;
+  const showTip = (e) => { const g = e.target.closest && e.target.closest('[data-tip]'); if (!g) { tip.hidden = true; return; } tip.textContent = g.dataset.tip; tip.hidden = false; const r = tip.getBoundingClientRect(); let x = e.clientX - r.width / 2, yy = e.clientY - r.height - 14; x = Math.max(8, Math.min(window.innerWidth - r.width - 8, x)); if (yy < 8) yy = e.clientY + 18; tip.style.left = x + 'px'; tip.style.top = yy + 'px'; clearTimeout(tipT); if (e.pointerType === 'touch') tipT = setTimeout(() => { tip.hidden = true; }, 2600); };
+  document.addEventListener('pointermove', (e) => { if (e.pointerType === 'mouse') showTip(e); });
+  document.addEventListener('pointerdown', (e) => { if (e.pointerType !== 'mouse') showTip(e); });
+  window.addEventListener('scroll', () => { tip.hidden = true; }, { passive: true });
 
   sync.onStatus(updatePill);
   sync.start();
