@@ -215,7 +215,7 @@ function shell() {
   app.innerHTML = `<header class="ribbon"><div class="wrap rib-in">
       <div class="brand"><img src="icons/icon-192.png" alt=""><b>OOQ</b></div>
       <nav class="toptabs" aria-label="Secciones">${TABS.map(([k, l]) => `<button data-a="tab" data-v="${k}">${l}</button>`).join('')}</nav>
-      <div class="top-r"><button class="syncpill" data-a="settings" id="syncpill"><i></i><span>Local</span></button>
+      <div class="top-r"><button class="syncpill" data-a="settings" id="syncpill"><i></i><span>Local</span></button><button class="iconbtn addtop" data-a="add" aria-label="Añadir"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
       <button class="iconbtn" data-a="settings" aria-label="Ajustes"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button></div>
     </div></header>
     ${sync.configured() ? '' : '<div class="wrap"><div class="banner">Modo local: los datos solo están en este dispositivo.</div></div>'}
@@ -256,6 +256,7 @@ function render() {
   document.querySelectorAll('[data-a="tab"][data-v="manager"]').forEach((b) => b.classList.toggle('dot', st.briefNew && st.tab !== 'manager'));
   if (st.tab === 'manager') st.briefNew = false;
   main.innerHTML = v();
+  labelTables(main);
   if (chat) { const box = $('#chatlog'); if (box) window.scrollTo(0, document.body.scrollHeight); }
   updatePill();
 }
@@ -367,10 +368,25 @@ function aiMovesPanel(bz) {
   return panel('Manager IA', `<div class="ai-sit">${esc(d.situacion)}</div>${movesTable(mv)}
     <div class="foot ai-foot"><span>${st.aiMovesBusy ? 'Actualizando…' : `Hace ${mins < 1 ? 'un momento' : mins < 60 ? mins + ' min' : Math.round(mins / 60) + ' h'}`}${st.aiMovesErr ? ` · <span class="neg">${esc(st.aiMovesErr)}</span>` : ''}</span><button class="lnk" data-a="ai-moves">Actualizar</button><button class="lnk" data-a="tab" data-v="manager">Hablar con el Manager</button></div>`, '<span class="tag acc">IA</span>');
 }
+/* milestones: the ladder to 5k a month, measured on your best month */
+const MILES = [500, 1000, 1500, 2000, 3000, 4000, 5000];
+const kLabel = (v) => (v >= 1000 ? String(v / 1000).replace('.', ',') + 'k' : String(v));
+function milestonesCard() {
+  const cm = curMonth(), cur = parts(cm).net, best = Math.max(0, cur, ...monthRange().map((m) => parts(m).net));
+  const reached = MILES.filter((m) => best >= m).length, next = MILES[reached];
+  const prev = reached ? MILES[reached - 1] : 0;
+  const toNext = next ? Math.max(0, Math.min(1, cur / next)) : 1;
+  const fill = next ? ((reached ? reached - 1 : 0) + (reached ? Math.max(0, Math.min(1, (best - prev) / (next - prev))) : 0)) / (MILES.length - 1) : 1;
+  const left = daysIn(cm) - new Date().getDate() + 1, falta = next ? Math.max(0, next - cur) : 0;
+  const planM = next ? Object.keys(S0().plan || {}).sort().find((mk) => n0(S0().plan[mk].profit) >= next * 0.9) : null;
+  const track = `<div class="mile-track" style="--fill-n:${fill.toFixed(3)}">${MILES.map((m, i) => `<div class="ms${best >= m ? ' done' : ''}${i === reached ? ' cur' : ''}"><i>${best >= m ? '<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>' : ''}</i><span>${kLabel(m)}</span></div>`).join('')}</div>`;
+  const nextT = next ? `<div class="mile-next"><div class="kv"><span>Siguiente: <b>${kLabel(next)} €/mes</b>${planM ? ` <span class="mut">· plan ${MSHORT[pm(planM).m - 1]} ${String(pm(planM).y).slice(2)}</span>` : ''}</span><b>${Math.round(toNext * 100)}%</b></div>${pbar(toNext, toNext >= 1 ? 'won' : '')}<div class="mut sm2">${falta ? `Este mes faltan ${eur(falta)} → ${eur(falta / left)}/día los próximos ${left} días` : 'Conseguido este mes'}</div></div>` : '<div class="mile-next"><b class="pos">5k al mes conseguido.</b></div>';
+  return panel('Camino a 5k', `<div class="mile-head"><div><div class="mh-big ${cur < 0 ? 'neg' : ''}">${eur(cur)}</div><div class="mut sm2">beneficio este mes · mejor mes ${eur(best)}</div></div><span class="lvl">Nivel ${reached}/${MILES.length}</span></div>${track}${nextT}`);
+}
 function viewHome() {
   const cm = curMonth(), pb = payback(), bz = brain();
   const moves = panel('Mejores movimientos', movesTable(bz.moves.slice(0, 7)) + (bz.moves.length > 7 ? `<div class="foot"><button class="lnk" data-a="moves">Ver los ${bz.moves.length}</button></div>` : ''), String(bz.moves.length));
-  const exp = panel('Para tu Manager', `<div class="stack pad"><p class="lead2">Copia todos tus datos y pégalos en tu proyecto de Claude.</p><div class="btnrow"><button class="btn-g" data-a="export-ai">Copiar para Claude</button><button class="btn-o" data-a="export-ai-file">Descargar .txt</button></div></div>`);
+  const exp = panel('Para tu Manager', `<div class="stack pad"><p class="lead2 mut">Copia tus datos y pégalos en tu proyecto de Claude.</p><div class="btnrow"><button class="btn-g" data-a="export-ai">Copiar para Claude</button><button class="btn-o" data-a="export-ai-file">Descargar .txt</button></div></div>`);
   const caja = panel('Caja', cajaTable(), '<button class="lnk" data-a="settings">Ajustar</button>');
   const month = panel(monthName(cm), monthTable(cm));
   const open = L('orders').filter((o) => pb[o.id] && (o.status !== 'recibido' || pb[o.id].rev < pb[o.id].cost)).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 4);
@@ -380,7 +396,7 @@ function viewHome() {
   }).join('')}</tbody></table>` : empty('Nada pendiente. Al apuntar un pedido verás aquí cuánto te falta para recuperarlo.'), '<button class="lnk" data-a="goto-orders">Ver todos</button>');
   const gs = L('goals').slice().sort((a, b) => n0(a.order) - n0(b.order));
   const goals = gs.length ? panel('Metas', goalsTable(gs, true), '<button class="lnk" data-a="tab" data-v="metas">Ver</button>') : '';
-  return `<div class="cols"><div class="col">${exp}${moves}${paceBlock()}</div><div class="col">${caja}${month}${orders}${goals}</div></div>`;
+  return `<div class="cols"><div class="col">${milestonesCard()}${moves}${paceBlock()}</div><div class="col">${caja}${exp}${month}${orders}${goals}</div></div>`;
 }
 function orderBody(o, pb) {
   const cost = pb.cost, rec = pb.rev, pct = cost ? Math.min(1, rec / cost) : 0, gap = cost - rec;
@@ -697,7 +713,7 @@ function viewGoals() {
     return `<tr class="${cur ? 'tot2' : ''}"><td>${MSHORT[pm(mk).m - 1]} ${String(pm(mk).y).slice(2)}${cur ? '<span class="sub">este mes</span>' : ''}</td><td class="n">${n0(p.sales)}</td><td class="n">${n0(p.min)}</td><td class="n ${past || cur ? sc : ''}">${past || cur ? pr.nSales : '·'}</td><td class="n">${eur(n0(p.profit)).replace(/,00/, '')}</td><td class="n">${past || cur ? money(pr.net, true) : '·'}</td></tr>`;
   }).join('')}</tbody></table></div><div class="foot">Si no llegas al mínimo de un mes, no se abre cuenta nueva el siguiente: primero se arregla lo que falla.</div>` : empty('Sin plan mensual.');
   return `<div class="toolbar"><span class="ttl">Plan</span><span style="display:flex;gap:6px"><button class="btn-o" data-a="planedit">Editar plan</button><button class="btn-g" data-a="goal">+ Meta</button></span></div>
-    <div class="cols"><div class="col">${paceBlock()}${panel('Plan mensual', pt)}</div><div class="col">${panel('Metas', gs.length ? goalsTable(gs, false) : empty('Aún no hay metas.'))}</div></div>`;
+    <div class="cols"><div class="col">${milestonesCard()}${paceBlock()}${panel('Plan mensual', pt)}</div><div class="col">${panel('Metas', gs.length ? goalsTable(gs, false) : empty('Aún no hay metas.'))}</div></div>`;
 }
 
 /* ---------------- sheets ---------------- */
@@ -708,7 +724,15 @@ function openSheet(kind, ctx) {
   sheetEl.hidden = false; document.body.classList.add('locked');
   afterSheet();
 }
-function redrawSheet() { brainCache = null; const p = $('.sheet-panel', sheetEl); if (p) { p.innerHTML = sheetHTML(); afterSheet(); } }
+function redrawSheet() { brainCache = null; const p = $('.sheet-panel', sheetEl); if (p) { p.innerHTML = sheetHTML(); afterSheet(); labelTables(p); } }
+// phone: wide tables become cards; each value gets its column name as a label
+function labelTables(root) {
+  root.querySelectorAll('table.stock, table.goals').forEach((t) => {
+    const hs = [...t.querySelectorAll('thead th')].map((h) => h.textContent.trim());
+    t.style.setProperty('--cols', Math.max(1, hs.slice(1).filter(Boolean).length));
+    t.querySelectorAll('tbody tr').forEach((r) => [...r.children].forEach((c, i) => { if (i && hs[i]) c.dataset.l = hs[i]; }));
+  });
+}
 function closeSheet() { sheetEl.hidden = true; sheetEl.innerHTML = ''; st.sheet = null; document.body.classList.remove('locked'); }
 const head = (t) => `<div class="sheet-head"><h2 id="sh-t">${t}</h2><button class="xbtn" data-a="close" aria-label="Cerrar">×</button></div>`;
 const fld = (id, label, val, attrs) => `<div class="field"><label for="${id}">${label}</label><input id="${id}" value="${esc(val == null ? '' : val)}" ${attrs || 'inputmode="decimal"'}></div>`;
