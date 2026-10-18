@@ -5,7 +5,7 @@ import * as sync from './sync.js';
 import * as B from './brain.js';
 import { createAgent, MODES as AI_MODES } from './agent.js';
 
-const C = { settings: 'lg-settings', models: 'lg-models', sales: 'lg-sales', orders: 'lg-orders', spend: 'lg-spend', income: 'lg-income', bills: 'lg-bills', goals: 'lg-goals', listings: 'lg-listings', chat: 'lg-chat' };
+const C = { settings: 'lg-settings', models: 'lg-models', sales: 'lg-sales', orders: 'lg-orders', spend: 'lg-spend', income: 'lg-income', bills: 'lg-bills', goals: 'lg-goals', listings: 'lg-listings', chat: 'lg-chat', transfers: 'lg-transfers' };
 const $ = (s, r = document) => r.querySelector(s);
 const app = $('#app'), sheetEl = $('#sheet'), toastEl = $('#toast');
 
@@ -77,19 +77,27 @@ const payments = (o) => o.payments || [];
 const orderCost = (o) => n0(o.paid) + sum(payments(o).map((p) => n0(p.amount))) + n0(o.owed) + n0(o.dhl);
 const owedTotal = () => sum(L('orders').map((o) => n0(o.owed)));
 const pendingDays = () => n0(S0().pendingDays) || B.FALLBACK.pendingDays;
-// sales of the last days are still pending in Vinted: counted in cash, not yet spendable
-function pendingVinted() {
-  const t = S0().cashAt || '', lim = Date.now() - pendingDays() * 86400000;
-  return sum(L('sales').filter((x) => (x.at || '') > t && Date.parse(x.at) > lim).map((x) => n0(x.price)));
+// Money lives in 3 places, like in Vinted: PENDING (sold, buyer hasn't confirmed) -> VINTED BALANCE (released) -> BANK (withdrawal).
+const isPending = (x) => !x.released && !x.cancelled;
+const pendingSales = (acc) => L('sales').filter((x) => isPending(x) && (!acc || x.account === acc));
+const pendingVinted = (acc) => sum(pendingSales(acc).map((x) => n0(x.price)));
+function vintedBalance(acc) {
+  const s = S0(), t = s.vbalAt || '', base = s.vbal || {};
+  let b = acc ? n0(base[acc]) : sum(Object.values(base).map(n0));
+  for (const x of L('sales')) if (x.released && !x.cancelled && (x.releasedAt || '') > t && (!acc || x.account === acc)) b += n0(x.price);
+  for (const w of L('transfers')) if ((w.at || '') > t && (!acc || w.account === acc)) b -= n0(w.amount);
+  return b;
 }
 function parts(pre) {
-  const sales = on(L('sales'), pre), spend = on(L('spend'), pre), inc = on(L('income'), pre);
+  const sales = on(L('sales'), pre).filter((x) => !x.cancelled), spend = on(L('spend'), pre), inc = on(L('income'), pre);
   const ord = on(L('orders'), pre).filter((o) => !o.draft), dhl = on(L('orders'), pre, 'receivedDate');
   const pays = sum(L('orders').flatMap((o) => payments(o)).filter((p) => p.date && p.date.startsWith(pre)).map((p) => n0(p.amount)));
   const p = {
     sales, nSales: sales.length,
     revenue: sum(sales.map((s) => n0(s.price))),
     profit: sum(sales.map(profitOf)),
+    released: sum(L('sales').filter((x) => x.released && !x.cancelled && (x.releasedAt || '').slice(0, 10).startsWith(pre)).map((x) => n0(x.price))),
+    withdraw: sum(on(L('transfers'), pre).map((w) => n0(w.amount))),
     biz: sum(spend.filter((x) => x.kind === 'negocio').map((x) => n0(x.amount))),
     pers: sum(spend.filter((x) => x.kind !== 'negocio').map((x) => n0(x.amount))),
     income: sum(inc.map((x) => n0(x.amount))),
@@ -97,13 +105,13 @@ function parts(pre) {
     nOrders: ord.length,
   };
   p.net = p.profit - p.biz;
-  p.flow = p.revenue + p.income - p.biz - p.pers - p.orders;
+  p.flow = p.withdraw + p.income - p.biz - p.pers - p.orders; // what moves in your bank
   return p;
 }
-function cashNow() {
+function bankNow() {
   const s = S0(), t = s.cashAt || '';
   let c = n0(s.cash);
-  for (const x of L('sales')) if ((x.at || '') > t) c += n0(x.price);
+  for (const w of L('transfers')) if ((w.at || '') > t) c += n0(w.amount);
   for (const x of L('income')) if ((x.at || '') > t) c += n0(x.amount);
   for (const x of L('spend')) if ((x.at || '') > t) c -= n0(x.amount);
   for (const o of L('orders')) {
@@ -114,8 +122,10 @@ function cashNow() {
   }
   return c;
 }
+const cashNow = () => bankNow() + vintedBalance() + pendingVinted(); // all your money, wherever it is
 const pendingBills = () => sum(L('bills').filter((b) => b.month <= curMonth() && !b.paid).map((b) => n0(b.amount)));
-const spendable = () => cashNow() - pendingVinted() - n0(S0().cushion) - pendingBills() - owedTotal();
+// you can only spend what's in the bank or already released in Vinted
+const spendable = () => bankNow() + vintedBalance() - n0(S0().cushion) - pendingBills() - owedTotal();
 
 // Which sales paid back which order: first in, first out, per watch model.
 function payback() {
@@ -124,7 +134,7 @@ function payback() {
   for (const o of orders) {
     res[o.id] = { units: 0, sold: 0, rev: 0, cost: orderCost(o), potential: 0, lots: [] };
     for (const l of o.lines || []) {
-      const lot = { oid: o.id, modelId: l.modelId, date: o.date, at: o.at || '', left: n0(l.qty) };
+      const lot = { oid: o.id, modelId: l.modelId, date: o.date, recAt: o.status === 'recibido' ? (o.receivedAt || (o.receivedDate ? o.receivedDate + 'T12:00:00.000Z' : '')) : '', left: n0(l.qty) };
       res[o.id].units += n0(l.qty);
       res[o.id].lots.push(lot);
       (lots[l.modelId] = lots[l.modelId] || []).push(lot);
@@ -133,7 +143,9 @@ function payback() {
   const sales = L('sales').slice().sort((a, b) => (a.date + (a.at || '')).localeCompare(b.date + (b.at || '')));
   for (const s of sales) {
     // a sale counts toward an order only if it happened after the order was paid
-    const lot = (lots[s.modelId] || []).find((x) => x.left > 0 && (x.at && s.at ? s.at >= x.at : s.date > x.date));
+    // a sale only pays back an order once that order has arrived; before that it's old stock
+    if (s.cancelled) continue;
+    const lot = (lots[s.modelId] || []).find((x) => x.left > 0 && x.recAt && (s.at || s.date + 'T23:00:00.000Z') >= x.recAt);
     if (!lot) continue;
     lot.left--;
     res[lot.oid].sold++;
@@ -180,7 +192,7 @@ function brain() {
   return brainCache;
 }
 const stockOf = (id) => brain().stocks.find((s) => s.m.id === id) || null;
-const agent = createAgent({ db, C, L, model, S0, brain, fresh: () => { brainCache = null; }, costOf, todayKey, nowISO, patchSettings, pouches, pouchCost, cashNow, pendingVinted, owedTotal, spendable });
+const agent = createAgent({ db, C, L, model, S0, brain, fresh: () => { brainCache = null; }, costOf, todayKey, nowISO, patchSettings, pouches, pouchCost, cashNow, bankNow, vintedBalance, pendingVinted, owedTotal, spendable });
 const SST = { enfria: ['Se enfría', 'warn'], rotura: ['Sin stock', 'neg'], urgente: ['Urgente', 'neg'], pedir: ['Pedir', 'warn'], ok: ['OK', 'pos'], exceso: ['Exceso', 'warn'], parado: ['Parado', 'warn'], liquidar: ['Liquidar', 'warn'], lento: ['Lento', 'mut'], 'sin datos': ['Sin ventas', 'mut'], fuera: ['Fuera', 'mut'] };
 const days1 = (v) => (v === Infinity || isNaN(v) ? '∞' : v >= 100 ? '99+' : String(Math.floor(v)));
 const rate1 = (v) => (v ? v.toFixed(v < 1 ? 2 : 1).replace('.', ',') : '0');
@@ -297,11 +309,13 @@ function monthTable(mk) {
   }
   return `<table class="xl"><tbody>
     ${tr('Ventas (' + p.nSales + ')', money(p.revenue, true))}
+    ${p.released ? tr('Liberado en Vinted', money(p.released, true)) : ''}
+    ${tr('Retirado de Vinted al banco', money(p.withdraw, true))}
     ${p.income ? tr('Otros ingresos', money(p.income, true)) : ''}
     ${tr('Pedidos de stock', money(-p.orders))}
     ${tr('Gastos negocio', money(-p.biz))}
     ${tr('Gastos personales', money(-p.pers))}
-    ${tr('Flujo de caja', money(p.flow, true), 'tot')}
+    ${tr('Flujo del banco', money(p.flow, true), 'tot')}
     ${tr('Beneficio', money(p.net, true), 'tot2')}
     <tr><th>Meta ${eur(g)}</th><td class="n barcell">${pbar(p.net / g)}<span>${Math.max(0, Math.round(p.net / g * 100))}%</span></td></tr>
     ${pace}
@@ -329,15 +343,19 @@ function movesTable(ms, from = 0) {
   return `<table class="xl list moves"><tbody>${ms.map((mv, i) => `<tr class="click" ${moveAttrs(mv.act)}><td class="mi n">${from + i + 1}</td><td><span class="tag ${TAGC[mv.tag] || ''}">${esc(mv.tag)}</span> <b>${esc(mv.title)}</b><span class="sub">${esc(mv.why)}</span></td></tr>`).join('')}</tbody></table>`;
 }
 function cajaTable() {
-  const s = S0(), cash = cashNow(), pend = pendingBills(), pv = pendingVinted(), ow = owedTotal();
+  const s = S0(), pend = pendingBills(), ow = owedTotal(), bank = bankNow(), vb = vintedBalance(), pv = pendingVinted(), np = pendingSales().length;
+  const accs = (s.accounts || []).filter((a) => Math.abs(vintedBalance(a)) > 0.005 || pendingVinted(a) > 0);
+  const per = accs.length > 1 ? `<span class="sub">${accs.map((a) => `${esc(a)}: ${eur(vintedBalance(a))} saldo · ${eur(pendingVinted(a))} pendiente`).join('<br>')}</span>` : '';
   return `<table class="xl"><tbody>
-    <tr class="big"><th>Caja real</th><td class="n">${money(cash)}</td></tr>
-    ${pv ? tr(`Aún pendiente en Vinted (${pendingDays()} días)`, money(-pv)) : ''}
+    <tr class="big"><th>Banco</th><td class="n">${money(bank)}</td></tr>
+    ${tr('Saldo en Vinted', money(vb) + per)}
+    <tr class="click" data-a="pending"><th>Pendiente en Vinted <span class="sub">${np} venta${np === 1 ? '' : 's'} sin confirmar · toca para liberar</span></th><td class="n">${money(pv)}</td></tr>
+    ${tr('Total', money(bank + vb + pv), 'tot')}
     ${ow ? tr('Debes de pedidos', money(-ow)) : ''}
-    ${tr('Pagos fijos pendientes', money(-pend))}
+    ${pend ? tr('Pagos fijos pendientes', money(-pend)) : ''}
     ${n0(s.cushion) ? tr('Colchón', money(-n0(s.cushion))) : ''}
-    ${tr('Puedes gastar', money(spendable()), 'tot')}
-  </tbody></table>`;
+    ${tr('Puedes gastar', money(spendable()) + '<span class="sub">banco + saldo, sin lo pendiente</span>', 'tot2')}
+  </tbody></table><div class="foot btnrow"><button class="btn-g" data-a="withdraw">Retirar a banco</button><button class="btn-o" data-a="pending">Ventas pendientes</button></div>`;
 }
 /* AI moves on Inicio: Claude reads everything and decides; the rules list is only the fallback */
 const AIM_KEY = 'ooq_ai_moves';
@@ -422,7 +440,7 @@ function orderBody(o, pb) {
 function viewCal() {
   const mk = st.month, p = parts(mk), mode = st.calMode;
   return `<div class="toolbar">${mnav()}<div class="seg sm"><button data-a="calmode" data-v="profit" aria-pressed="${mode === 'profit'}">Beneficio</button><button data-a="calmode" data-v="cash" aria-pressed="${mode === 'cash'}">Caja</button><button data-a="calmode" data-v="units" aria-pressed="${mode === 'units'}">Ventas</button></div></div>
-    <div class="cols wide"><div class="col">${panel(mode === 'profit' ? 'Beneficio por día' : mode === 'units' ? 'Relojes vendidos por día' : 'Dinero que entra − sale por día', calGrid(mk))}${panel('Total del mes', monthTable(mk))}</div>
+    <div class="cols wide"><div class="col">${panel(mode === 'profit' ? 'Beneficio por día' : mode === 'units' ? 'Relojes vendidos por día' : 'Banco: lo que entra − sale por día', calGrid(mk))}${panel('Total del mes', monthTable(mk))}</div>
     <div class="col">${dayPanel()}${mode === 'profit' ? panel('Acumulado', spark(mk)) : ''}</div></div>`;
 }
 function dayVal(k) { const p = parts(k); return st.calMode === 'profit' ? p.net : st.calMode === 'units' ? p.nSales : p.flow; }
@@ -459,11 +477,12 @@ function line(label, sub, amount, col, id) {
 function dayRows(k) {
   let h = '';
   const prof = st.calMode === 'profit';
-  L('sales').filter((s) => s.date === k).forEach((s) => { h += line(esc(s.modelName || 'Venta'), 'vendido ' + eur(n0(s.price)) + (s.account ? ' · ' + esc(s.account) : ''), money(prof ? profitOf(s) : n0(s.price), true), 'sales', s.id); });
+  L('sales').filter((s) => s.date === k).forEach((s) => { h += line(esc(s.modelName || 'Venta'), 'vendido ' + eur(n0(s.price)) + (s.account ? ' · ' + esc(s.account) : ''), prof ? money(profitOf(s), true) : `<span class="sub">${eur(n0(s.price))} → Vinted</span>`, 'sales', s.id); });
   L('orders').filter((o) => o.date === k).forEach((o) => { h += line('Pedido de stock', (o.lines || []).reduce((a, l) => a + n0(l.qty), 0) + ' relojes', prof ? '<span class="sub">no resta beneficio</span>' : money(-n0(o.paid)), null, o.id); });
   L('orders').filter((o) => o.receivedDate === k && n0(o.dhl)).forEach((o) => { h += line('Cobro DHL', 'pedido ' + shortDate(o.date), prof ? '<span class="sub">va en el coste</span>' : money(-n0(o.dhl)), null, o.id + 'd'); });
   L('spend').filter((x) => x.date === k).forEach((x) => { const biz = x.kind === 'negocio'; h += line(esc(x.cat) + (x.note ? ' · ' + esc(x.note) : ''), biz ? 'negocio' : 'personal', biz || !prof ? money(-n0(x.amount)) : `<span class="sub">${eur(-n0(x.amount))}</span>`, 'spend', x.id); });
   L('income').filter((x) => x.date === k).forEach((x) => { h += line(esc(x.note || 'Ingreso'), 'ingreso', money(n0(x.amount), true), 'income', x.id); });
+  L('transfers').filter((x) => x.date === k).forEach((x) => { h += line('Retiro de Vinted', esc(x.account || ''), prof ? `<span class="sub">${eur(n0(x.amount))}</span>` : money(n0(x.amount), true), 'transfers', x.id); });
   return h;
 }
 
@@ -775,8 +794,9 @@ function sheetHTML() {
   }
   if (kind === 'settings') {
     const s = S0(), ss = sync.getStatus();
-    return head('AJUSTES') + `<div class="field"><label for="s-cash">Dinero que tienes ahora mismo (€)</label><input id="s-cash" inputmode="decimal" value="${esc(String(r2(cashNow())).replace('.', ','))}"></div>
-      <div class="hint">Pon lo que ves en tu cuenta ahora. Desde este momento la app suma las ventas e ingresos y resta pedidos, DHL y gastos que apuntes.</div>
+    return head('AJUSTES') + `<div class="field"><label for="s-cash">Dinero en el banco ahora mismo (€)</label><input id="s-cash" inputmode="decimal" value="${esc(String(r2(bankNow())).replace('.', ','))}"></div>
+      <div class="fields2">${acctNames().map((a) => fld('s-vb-' + a.replace(/\W/g, '_'), 'Saldo en Vinted · ' + esc(a) + ' (€)', String(r2(vintedBalance(a))).replace('.', ','))).join('')}</div>
+      <div class="hint">Banco = lo que ves en tu banco. Saldo Vinted = lo ya liberado que aún no has retirado (en Vinted → Saldo). Lo pendiente va venta a venta: Caja → Ventas pendientes.</div>
       <div class="fields2">${fld('s-cushion', 'Colchón: no bajar de (€)', s.cushion)}${fld('s-goal', 'Meta de beneficio al mes (€)', s.monthlyGoal)}</div>
       <div class="fields2">${fld('s-defcost', 'Coste por reloj si no sabes el exacto (€)', s.defaultCost)}<div></div></div>
       <div class="fields2">${fld('s-pouches', 'Bolsitas en casa', pouches(), 'inputmode="numeric"')}${fld('s-pouchcost', 'Coste por bolsita (€)', pouchCost())}</div>
@@ -793,6 +813,19 @@ function sheetHTML() {
         <div style="display:flex;gap:8px;flex-wrap:wrap">${ss.enabled ? '<button class="ghost" data-a="sync-now">Sincronizar ahora</button>' : ''}<button class="ghost" data-a="export-ai">Copiar para Claude</button><button class="ghost" data-a="export">Descargar copia</button>${ss.enabled && ss.user ? '<button class="ghost" data-a="logout">Cerrar sesión</button>' : ''}</div></div>`;
   }
   if (kind === 'moves') return head('MEJORES MOVIMIENTOS') + movesTable(brain().moves);
+  if (kind === 'pending') {
+    const ps = pendingSales().sort((a, b) => (a.at || a.date).localeCompare(b.at || b.date)), accs = [...new Set(ps.map((x) => x.account || '—'))];
+    const old = ps.filter((x) => B.diffD(x.date, todayKey()) >= pendingDays()).length;
+    return head('PENDIENTE EN VINTED') + `<div class="hint">Ventas que el comprador aún no ha confirmado. Cuando Vinted te las libere, márcalas: pasan a tu saldo de Vinted.</div>
+      ${ps.length ? `<table class="xl list"><tbody>${accs.map((a) => `<tr class="grp"><td colspan="3">${esc(a)} · ${eur(pendingVinted(a === '—' ? null : a))}</td></tr>` + ps.filter((x) => (x.account || '—') === a).map((x) => { const d = B.diffD(x.date, todayKey()); return `<tr><td>${esc(x.modelName || 'Venta')}<span class="sub">${shortDate(x.date)} · hace ${d} día${d === 1 ? '' : 's'}${d >= pendingDays() ? ' · <b class="warn">¿ya liberada?</b>' : ''}</span></td><td class="n">${eur(n0(x.price))}</td><td class="x" style="width:auto"><button class="cellbtn" data-a="release" data-id="${esc(x.id)}">Liberada</button></td></tr>`; }).join('')).join('')}</tbody></table>` : empty('Nada pendiente.')}
+      ${ps.length > 1 ? `<button class="ghost" data-a="release-all">Liberar todas (${ps.length})</button>` : ''}${old ? `<div class="hint">${old} llevan ${pendingDays()}+ días: lo normal es que ya estén liberadas.</div>` : ''}`;
+  }
+  if (kind === 'withdraw') {
+    const accs = acctNames(), acc = ctx.acc || accs.find((a) => vintedBalance(a) > 0) || accs[0];
+    return head('RETIRAR A BANCO') + `<div class="field"><label for="w-acc2">Cuenta de Vinted</label><select id="w-acc2">${accs.map((a) => `<option${a === acc ? ' selected' : ''}>${esc(a)}</option>`).join('')}</select></div>
+      <div class="fields2">${fld('w-amt', 'Importe (€)', String(r2(Math.max(0, vintedBalance(acc)))).replace('.', ','))}${dateFld('w-date', ctx.date)}</div>
+      <div class="hint">Saldo en Vinted de esa cuenta: ${eur(vintedBalance(acc))}. Sale del saldo de Vinted y entra en tu banco.</div><div class="err" id="sh-err"></div><button class="primary" data-a="save-withdraw">Guardar retiro</button>`;
+  }
   if (kind === 'notif') return head('AVISOS EN EL MÓVIL') + `<div class="hint">Te llegan por Telegram aunque la app esté cerrada: briefing a las 9:00 escrito por la IA, controles de 24h y 48h de cada test, stock a punto de romperse, deuda y resumen a las 21:00. Lo envía un proceso gratis de GitHub cada hora.</div>
     <ol class="steps"><li><b>Telegram</b> → busca @BotFather → /newbot → ponle nombre (ej. OOQ Manager) → copia el token</li><li>Abre tu bot nuevo → pulsa <b>Start</b></li><li><b>Supabase</b> → tu proyecto → Project Settings → API Keys → Secret keys → copia la clave (sb_secret_…)</li><li><b>GitHub</b> → repo ooq-ledger → Settings → Secrets and variables → Actions → New repository secret, 3 veces:<br>· TELEGRAM_BOT_TOKEN = token del paso 1<br>· SUPABASE_SECRET_KEY = clave del paso 3<br>· ANTHROPIC_API_KEY = tu clave de la IA</li><li>GitHub → pestaña <b>Actions</b> → OOQ Manager notifications → Run workflow → te llega el briefing al momento</li></ol>
     <div class="hint">Las claves quedan cifradas en GitHub; nadie las ve, ni en el repo público. Desde ahí funciona solo cada hora.</div>`;
@@ -882,7 +915,7 @@ function saleBody(ctx) {
     <div class="fields2">${dateFld('f-date', ctx.date)}<div class="field"><label for="f-acc">Cuenta</label><select id="f-acc">${accs.map((a) => `<option>${esc(a)}</option>`).join('')}</select></div></div>
     <label class="check"><input type="checkbox" id="f-dec" checked> Restar 1 del stock en casa</label>
     <label class="check"><input type="checkbox" id="f-relist" checked> Lo vuelvo a publicar en la misma cuenta</label>
-    <div class="preview"><div class="kv"><span class="mut">Beneficio</span><b id="f-prev">—</b></div><div class="kv"><span class="mut">Entra en caja</span><b id="f-cash">—</b></div></div><div class="err" id="sh-err"></div>
+    <div class="preview"><div class="kv"><span class="mut">Beneficio</span><b id="f-prev">—</b></div><div class="kv"><span class="mut">Va a pendiente en Vinted</span><b id="f-cash">—</b></div></div><div class="err" id="sh-err"></div>
     <button class="primary" data-a="save-sale">Guardar venta</button>`;
 }
 function orderForm(ctx) {
@@ -970,7 +1003,7 @@ function orderPreview() {
   const al = allocLanded(ls, pq, pu, ship, 0, lane === 'dhl'), now = goods + ship - owed, iva = lane === 'dhl' ? 0.21 * (goods + ship) : 0;
   box.innerHTML = `<div class="kv"><span class="mut">Relojes</span><b>${units} uds · ${eur(wgoods)}</b></div>${pg ? `<div class="kv"><span class="mut">Bolsitas</span><b>${pq} uds · ${eur(pg)}</b></div>` : ''}${al.byW ? `<div class="kv"><span class="mut">Peso de la caja</span><b>${(al.kg + 0.4).toFixed(2).replace('.', ',')} kg aprox.</b></div>` : ''}
     <div class="kv"><span class="mut">Pagas hoy</span><b class="neg">${eur(now)}</b></div>${owed ? `<div class="kv"><span class="mut">Debes después</span><b class="neg">${eur(owed)}</b></div>` : ''}${iva ? `<div class="kv"><span class="mut">Al llegar: IVA 21% + gestión DHL</span><b class="warn">≈ ${eur(iva)} + gestión</b></div>` : ''}
-    <div class="kv"><span class="mut">Caja después</span><b class="${cashNow() - now < 0 ? 'neg' : ''}">${eur(cashNow() - now)}</b></div>
+    <div class="kv"><span class="mut">Banco después</span><b class="${bankNow() - now < 0 ? 'neg' : ''}">${eur(bankNow() - now)}</b></div>
     ${ls.map((l) => { const m = model(l.modelId), p = al.per[l.modelId]; return p ? `<div class="kv"><span class="mut">Coste/ud ${esc(m ? m.name : l.name || 'nuevo')}${al.byW ? '' : ' (sin peso: envío por valor)'}</span><b>≈ ${eur(p.landed)}</b></div>` : ''; }).join('')}`;
 }
 function afterSheet() {
@@ -1108,7 +1141,10 @@ async function saveSettings() {
   const cur = S0(), patch = { cushion: isNaN(cush) ? 0 : r2(cush), monthlyGoal: r2(g), defaultCost: isNaN(dc) ? 10 : r2(dc), pouchCost: isNaN(pc) ? 0 : r2(pc), pouches: isNaN(pq) ? 0 : Math.max(0, Math.round(pq)), accounts: accs.length ? accs : cur.accounts };
   const int = (id, d) => { const v = Math.round(num(sv(id))); return isNaN(v) || v <= 0 ? d : v; };
   Object.assign(patch, { pendingDays: int('s-pend', B.FALLBACK.pendingDays), testBench: int('s-bench', B.FALLBACK.bench), maxAccPerModel: int('s-maxacc', B.FALLBACK.maxAccPerModel), cycleDays: int('s-cycle', B.FALLBACK.cycleDays), leadDHL: int('s-ldhl', B.FALLBACK.leadDHL), leadDDP: int('s-lddp', B.FALLBACK.leadDDP) });
-  if (r2(cash) !== r2(cashNow())) { patch.cash = r2(cash); patch.cashAt = nowISO(); }
+  if (r2(cash) !== r2(bankNow())) { patch.cash = r2(cash); patch.cashAt = nowISO(); }
+  const vb = {}; let vChanged = false;
+  for (const a of acctNames()) { const v = num(sv('s-vb-' + a.replace(/\W/g, '_'))); vb[a] = isNaN(v) ? r2(vintedBalance(a)) : r2(v); if (vb[a] !== r2(vintedBalance(a))) vChanged = true; }
+  if (vChanged) { patch.vbal = vb; patch.vbalAt = nowISO(); }
   await db.put(C.settings, { ...(db.get(C.settings, 'settings') || DEF), ...patch, id: 'settings' });
   closeSheet(); toast('Guardado');
 }
@@ -1222,6 +1258,14 @@ function openOrderFor(lines, lane) {
 async function listingsOf(mid, acc) { return L('listings').filter((l) => l.modelId === mid && l.status === 'live' && (!acc || l.account === acc)); }
 
 // Everything Claude needs to manage the business, in one paste.
+async function saveWithdraw() {
+  const amt = num(sv('w-amt')), acc = sv('w-acc2'), date = sv('w-date');
+  if (isNaN(amt) || amt <= 0) return shErr('Pon el importe.');
+  if (!validDate(date)) return shErr('Pon una fecha válida.');
+  await db.put(C.transfers, { date, at: nowISO(), amount: r2(amt), account: acc });
+  closeSheet(); toast('Retiro guardado · +' + eur(amt) + ' al banco');
+}
+async function releaseSale(id) { const x = db.get(C.sales, id); if (x) await db.patch(C.sales, id, { released: true, releasedAt: nowISO() }); }
 function exportForClaude() {
   const snap = agent.snapshot() || {};
   const months = [shiftMonth(curMonth(), -2), shiftMonth(curMonth(), -1), curMonth()].map((mk) => { const p = parts(mk); return `${mk}: ${p.nSales} ventas, beneficio ${Math.round(p.net)} €, flujo ${Math.round(p.flow)} €`; });
@@ -1253,7 +1297,7 @@ function exportBackup() {
 
 /* ---------------- events ---------------- */
 const SAVE = { 'save-sale': saveSale, 'save-order': saveOrder, 'save-receive': saveReceive, 'save-spend': saveSpend, 'save-income': saveIncome, 'save-model': saveModel, 'save-settings': saveSettings, 'save-bill': saveBill, 'save-goal': saveGoal,
-  'save-snap': saveSnap, 'save-catchup': saveCatchup, 'save-newtest': saveNewTest, 'save-listing': saveListing, 'save-acc': saveAcc, 'save-plan': savePlan, 'save-debt': saveDebt };
+  'save-snap': saveSnap, 'save-withdraw': saveWithdraw, 'save-catchup': saveCatchup, 'save-newtest': saveNewTest, 'save-listing': saveListing, 'save-acc': saveAcc, 'save-plan': savePlan, 'save-debt': saveDebt };
 function setTab(v) { st.tab = v; lsSet('lg_tab', v); if (location.hash.slice(1) !== v) history.replaceState(null, '', '#' + v); window.scrollTo(0, 0); renderSoon(); }
 document.addEventListener('click', async (e) => {
   if (e.target === sheetEl) { closeSheet(); return; }
@@ -1310,6 +1354,10 @@ document.addEventListener('click', async (e) => {
     }
     case 'goto-plan': st.stockSeg = 'plan'; lsSet('lg_seg', 'plan'); if (st.sheet) closeSheet(); setTab('stock'); break;
     case 'moves': openSheet('moves'); break;
+    case 'pending': openSheet('pending'); break;
+    case 'withdraw': openSheet('withdraw', { date: todayKey() }); break;
+    case 'release': await releaseSale(b.dataset.id); toast('Liberada · pasa a tu saldo de Vinted'); redrawSheet(); break;
+    case 'release-all': { for (const x of pendingSales()) await releaseSale(x.id); toast('Todas liberadas'); redrawSheet(); break; }
     case 'export-ai': { const ok = await copyText(exportForClaude()); toast(ok ? 'Copiado · pégalo en tu proyecto de Claude' : 'No se pudo copiar: usa Descargar .txt'); break; }
     case 'export-ai-file': downloadText('ooq-' + todayKey() + '.txt', exportForClaude()); toast('Descargado · súbelo a tu proyecto de Claude'); break;
     case 'ai-moves': ensureAiMoves(true); break;
@@ -1426,6 +1474,17 @@ async function migrate() {
   }
 }
 
+// v7: money in 3 places. Recent sales start as pending in Vinted; old ones count as already released.
+async function migrate7() {
+  const cur = db.get(C.settings, 'settings'); if (!cur || n0(cur.migr) >= 7) return;
+  const lim = shiftDay(todayKey(), -14);
+  for (const x of L('sales')) if (x.released === undefined) {
+    const old = x.date < lim;
+    await db.patch(C.sales, x.id, { released: old, releasedAt: old ? (x.at || x.date + 'T12:00:00.000Z') : null });
+  }
+  await patchSettings({ migr: 7, vbal: cur.vbal || {}, vbalAt: cur.vbalAt || nowISO() });
+}
+
 /* ---------------- login ---------------- */
 function loginView(done) {
   const email = lsGet('lg-login-email', '');
@@ -1456,6 +1515,7 @@ async function boot() {
   }
   await seedIfEmpty();
   await migrate().catch((e) => console.warn('migrate', e));
+  await migrate7().catch((e) => console.warn('migrate7', e));
   shell(); render();
   const ta = $('#comp-text'), fi = $('#comp-file');
   ta.addEventListener('input', () => { ta.style.height = ''; ta.style.height = Math.min(140, ta.scrollHeight) + 'px'; });

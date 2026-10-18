@@ -36,23 +36,30 @@ const sent = stateRow.sent || {};
 /* ---------- same money maths as the app ---------- */
 const costOf = (m) => (m && !isNaN(parseFloat(m.landed)) ? n0(m.landed) : n0(settings.defaultCost));
 const payments = (o) => o.payments || [];
-function cashNow() {
+// money in 3 places, same as the app: pending in Vinted -> Vinted balance -> bank
+function bankNow() {
   const t = settings.cashAt || ''; let c = n0(settings.cash);
-  for (const x of data.sales) if ((x.at || '') > t) c += n0(x.price);
+  for (const w of col('transfers')) if ((w.at || '') > t) c += n0(w.amount);
   for (const x of data.income) if ((x.at || '') > t) c += n0(x.amount);
   for (const x of data.spend) if ((x.at || '') > t) c -= n0(x.amount);
   for (const o of data.orders) { if ((o.at || '') > t) c -= n0(o.paid); for (const p of payments(o)) if ((p.at || '') > t) c -= n0(p.amount); if (o.receivedAt && o.receivedAt > t) c -= n0(o.dhl); }
   return c;
 }
-const pendingDays = n0(settings.pendingDays) || B.FALLBACK.pendingDays;
-const pendingVinted = () => sum(data.sales.filter((x) => (x.at || '') > (settings.cashAt || '') && Date.parse(x.at) > Date.now() - pendingDays * 864e5).map((x) => n0(x.price)));
+const pendingVinted = () => sum(data.sales.filter((x) => !x.released && !x.cancelled).map((x) => n0(x.price)));
+function vintedBalance() {
+  const t = settings.vbalAt || ''; let b = sum(Object.values(settings.vbal || {}).map(n0));
+  for (const x of data.sales) if (x.released && (x.releasedAt || '') > t) b += n0(x.price);
+  for (const w of col('transfers')) if ((w.at || '') > t) b -= n0(w.amount);
+  return b;
+}
+const cashNow = () => bankNow() + vintedBalance() + pendingVinted();
 const owedTotal = () => sum(data.orders.map((o) => n0(o.owed)));
 const pendingBills = () => sum(data.bills.filter((b) => b.month <= today.slice(0, 7) && !b.paid).map((b) => n0(b.amount)));
-const spendable = () => cashNow() - pendingVinted() - n0(settings.cushion) - pendingBills() - owedTotal();
+const spendable = () => bankNow() + vintedBalance() - n0(settings.cushion) - pendingBills() - owedTotal();
 let cache = null;
 const brain = () => cache || (cache = B.analyze({ models: data.models, sales: data.sales, orders: data.orders, listings: data.listings, settings, now: Date.now(), today, costOf, cashFree: spendable(), owed: owedTotal() }));
 const L = (k) => data[k] || [];
-const agent = createAgent({ db: null, C: {}, L, model: (id) => data.models.find((m) => m.id === id), S0: () => settings, brain, fresh: () => { cache = null; }, costOf, todayKey: () => today, nowISO: () => new Date().toISOString(), patchSettings: async () => {}, pouches: () => n0(settings.pouches), pouchCost: () => n0(settings.pouchCost), cashNow, pendingVinted, owedTotal, spendable });
+const agent = createAgent({ db: null, C: {}, L, model: (id) => data.models.find((m) => m.id === id), S0: () => settings, brain, fresh: () => { cache = null; }, costOf, todayKey: () => today, nowISO: () => new Date().toISOString(), patchSettings: async () => {}, pouches: () => n0(settings.pouches), pouchCost: () => n0(settings.pouchCost), cashNow, bankNow, vintedBalance, pendingVinted, owedTotal, spendable });
 
 /* ---------- Telegram ---------- */
 let chatId = E.TELEGRAM_CHAT_ID || stateRow.chatId;

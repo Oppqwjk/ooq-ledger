@@ -160,7 +160,7 @@ export function createAgent(api) {
     const p = bz.pace;
     return prune({
       hoy: todayKey(),
-      caja: { real: r(cash, 0), pendiente_vinted: r(api.pendingVinted(), 0), deuda: r(api.owedTotal(), 0), gastable: r(api.spendable(), 0) },
+      caja: { banco: r(api.bankNow ? api.bankNow() : cash, 0), saldo_vinted: r(api.vintedBalance ? api.vintedBalance() : 0, 0), pendiente_vinted: r(api.pendingVinted(), 0), deuda: r(api.owedTotal(), 0), gastable: r(api.spendable(), 0) },
       mes: { ventas: p.S, objetivo: p.T, minimo: p.MIN, beneficio: r(p.P, 0), objetivo_beneficio: p.PT, ritmo_dia: r(p.paceDay, 2), necesita_dia: r(p.need, 2), proyeccion: p.proj, dias_quedan: p.left },
       plan: { [mk]: (s.plan || {})[mk], [nextMk]: (s.plan || {})[nextMk] },
       calculos: bz.moves.slice(0, 8).map((m) => `[${m.tag}] ${m.title} — ${m.why}`),
