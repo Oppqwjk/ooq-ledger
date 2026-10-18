@@ -3,8 +3,9 @@
 import * as db from './db.js';
 import * as sync from './sync.js';
 import * as B from './brain.js';
+import { createAgent, MODELS as AI_MODELS } from './agent.js';
 
-const C = { settings: 'lg-settings', models: 'lg-models', sales: 'lg-sales', orders: 'lg-orders', spend: 'lg-spend', income: 'lg-income', bills: 'lg-bills', goals: 'lg-goals', listings: 'lg-listings' };
+const C = { settings: 'lg-settings', models: 'lg-models', sales: 'lg-sales', orders: 'lg-orders', spend: 'lg-spend', income: 'lg-income', bills: 'lg-bills', goals: 'lg-goals', listings: 'lg-listings', chat: 'lg-chat' };
 const $ = (s, r = document) => r.querySelector(s);
 const app = $('#app'), sheetEl = $('#sheet'), toastEl = $('#toast');
 
@@ -179,6 +180,7 @@ function brain() {
   return brainCache;
 }
 const stockOf = (id) => brain().stocks.find((s) => s.m.id === id) || null;
+const agent = createAgent({ db, C, L, model, S0, brain, fresh: () => { brainCache = null; }, costOf, todayKey, nowISO, patchSettings, pouches, pouchCost, cashNow, pendingVinted, owedTotal, spendable });
 const SST = { rotura: ['Sin stock', 'neg'], urgente: ['Urgente', 'neg'], pedir: ['Pedir', 'warn'], ok: ['OK', 'pos'], exceso: ['Exceso', 'warn'], parado: ['Parado', 'warn'], liquidar: ['Liquidar', 'warn'], lento: ['Lento', 'mut'], 'sin datos': ['Sin ventas', 'mut'], fuera: ['Fuera', 'mut'] };
 const days1 = (v) => (v === Infinity || isNaN(v) ? '∞' : v >= 100 ? '99+' : String(Math.floor(v)));
 const rate1 = (v) => (v ? v.toFixed(v < 1 ? 2 : 1).replace('.', ',') : '0');
@@ -189,8 +191,8 @@ const acctNames = () => S0().accounts || [];
 const liveOf = (mid) => L('listings').filter((l) => l.modelId === mid && l.status === 'live');
 
 /* ---------------- state ---------------- */
-const TABS = [['inicio', 'Inicio'], ['calendario', 'P&L'], ['stock', 'Stock'], ['tests', 'Tests'], ['cuentas', 'Cuentas'], ['gastos', 'Gastos'], ['metas', 'Plan']];
-const BAR = ['inicio', 'calendario', 'stock', 'tests', 'cuentas', 'gastos'];
+const TABS = [['inicio', 'Inicio'], ['manager', 'Manager'], ['calendario', 'P&L'], ['stock', 'Stock'], ['tests', 'Tests'], ['cuentas', 'Cuentas'], ['gastos', 'Gastos'], ['metas', 'Plan']];
+const BAR = ['inicio', 'manager', 'calendario', 'stock', 'tests', 'cuentas', 'gastos'];
 const ICONS = {
   inicio: '<path d="M4 11.5 12 5l8 6.5V20H4z"/><path d="M10 20v-5h4v5"/>',
   calendario: '<rect x="3.5" y="5" width="17" height="15.5" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
@@ -202,6 +204,7 @@ const st = {
   tab: (location.hash.slice(1) && TABS.some((t) => t[0] === location.hash.slice(1))) ? location.hash.slice(1) : lsGet('lg_tab', 'inicio'),
   month: curMonth(), selDay: todayKey(), calMode: lsGet('lg_cal', 'profit'), stockSeg: lsGet('lg_seg', 'relojes'), filter: lsGet('lg_filter', 'activos'),
   confirm: null, sheet: null,
+  chatBusy: false, chatErr: '', chatImgs: [], chatLive: [], aiSetup: false, briefNew: false,
 };
 
 /* ---------------- shell ---------------- */
@@ -215,6 +218,11 @@ function shell() {
     ${sync.configured() ? '' : '<div class="wrap"><div class="banner">Modo local: los datos solo están en este dispositivo.</div></div>'}
     <main id="main" class="wrap"></main>
     <button class="fab" data-a="add" aria-label="Añadir">+</button>
+    <div class="composer" id="composer" hidden><div class="wrap comp-in">
+      <div class="comp-imgs" id="comp-imgs"></div>
+      <div class="comp-row"><label class="comp-cam" aria-label="Adjuntar captura"><input type="file" accept="image/*" id="comp-file" multiple hidden><svg viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg></label>
+      <textarea id="comp-text" rows="1" placeholder="Escribe al Manager…"></textarea>
+      <button class="comp-send" data-a="chat-send" aria-label="Enviar"><svg viewBox="0 0 24 24"><path d="M4 12h14M13 6l6 6-6 6"/></svg></button></div></div></div>
     <nav class="tabbar" aria-label="Secciones">${TABS.filter(([k]) => BAR.includes(k)).map(([k, l]) => `<button data-a="tab" data-v="${k}">${l}</button>`).join('')}</nav>`;
 }
 function updatePill() {
@@ -237,9 +245,15 @@ function renderSoon() { if (rq) return; rq = true; requestAnimationFrame(() => {
 function render() {
   const main = $('#main'); if (!main) return;
   document.querySelectorAll('[data-a="tab"]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === st.tab)));
-  const v = { inicio: viewHome, calendario: viewCal, stock: viewStock, tests: viewTests, cuentas: viewAccounts, gastos: viewSpend, metas: viewGoals }[st.tab] || viewHome;
+  const v = { inicio: viewHome, manager: viewManager, calendario: viewCal, stock: viewStock, tests: viewTests, cuentas: viewAccounts, gastos: viewSpend, metas: viewGoals }[st.tab] || viewHome;
   brainCache = null;
+  const chat = st.tab === 'manager' && !!agent.key() && !st.aiSetup;
+  document.body.classList.toggle('chatmode', st.tab === 'manager');
+  const comp = $('#composer'); if (comp) comp.hidden = !chat;
+  document.querySelectorAll('[data-a="tab"][data-v="manager"]').forEach((b) => b.classList.toggle('dot', st.briefNew && st.tab !== 'manager'));
+  if (st.tab === 'manager') st.briefNew = false;
   main.innerHTML = v();
+  if (chat) { const box = $('#chatlog'); if (box) window.scrollTo(0, document.body.scrollHeight); }
   updatePill();
 }
 
@@ -464,6 +478,81 @@ function viewPlan(seg, bz) {
   const skip = pl.skipped.length ? panel('Sin caja para', `<table class="xl list"><tbody>${pl.skipped.map((k) => `<tr><td>${esc(k.s.m.name)}<span class="sub">${LANE[k.lane]} ${k.want} uds · ${eur(k.want * costOf(k.s.m))} · ${esc(k.s.why)}</span></td></tr>`).join('')}</tbody></table><div class="foot">Vende o paga deudas primero. En cuanto haya caja aparece arriba.</div>`) : '';
   const how = `<div class="foot">Ritmo = ventas de 28 días, las recientes pesan más. Colchón de seguridad según cuánto varían tus ventas. Pide para cubrir lo que tarda el DDP + ${n0(S0().cycleDays) || B.FALLBACK.cycleDays} días. Si se acaba antes de que llegue un DDP, el hueco va por DHL. Coste por unidad = coste puesto del reloj.</div>`;
   return `<div class="toolbar">${seg}</div><div class="cols wide"><div class="col">${panel('Pedido recomendado', body)}${skip}</div><div class="col">${panel('Tu caja y plazos', head2 + how)}</div></div>`;
+}
+
+/* ---------------- manager (AI) ---------------- */
+function mdLite(t) {
+  const lines = esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').split('\n');
+  let h = '', inList = false;
+  for (const ln of lines) {
+    const m = ln.match(/^\s*(?:[-*•]|\d+[.)])\s+(.*)/);
+    if (m) { if (!inList) { h += '<ul>'; inList = true; } h += `<li>${m[1]}</li>`; continue; }
+    if (inList) { h += '</ul>'; inList = false; }
+    const hd = ln.match(/^#{1,4}\s+(.*)/);
+    h += hd ? `<p class="mh">${hd[1]}</p>` : ln.trim() ? `<p>${ln}</p>` : '';
+  }
+  return h + (inList ? '</ul>' : '');
+}
+const QUICK = [['¿Qué hago hoy?', 'Qué hago hoy: los 3 movimientos con más impacto, con números.'], ['Qué pido', '¿Qué pido ahora con mi caja? Dame el pedido exacto y por qué vía.'], ['Tests', '¿Cómo van mis tests? Veredicto de cada uno y qué hago.'], ['Cuentas', '¿Cómo reparto los anuncios entre cuentas y cuántas cuentas necesito?'], ['¿Llego al mes?', '¿Llego al objetivo del mes? Qué tengo que cambiar para llegar.']];
+function viewManager() {
+  if (!agent.key() || st.aiSetup) {
+    const cur = agent.modelId();
+    return `<div class="toolbar"><span class="ttl">OOQ Manager</span>${agent.key() ? '<button class="btn-o" data-a="ai-setup">Volver al chat</button>' : ''}</div>
+      <div class="cols"><div class="col">${panel('Conectar la IA', `<div class="stack pad">
+        <p class="lead2">El Manager es Claude dentro de tu app: ve todos tus datos, te habla, apunta lo que le dices, lee tus capturas de Vinted y cada mañana te dice qué hacer.</p>
+        <ol class="steps"><li>console.anthropic.com → crea cuenta</li><li>Billing → añade 10 €</li><li>Limits → pon un límite al mes (ej. 10 €)</li><li>API Keys → Create key → cópiala</li><li>Pégala aquí abajo → Guardar</li></ol>
+        <div class="field"><label for="ai-key">Clave de la API</label><input id="ai-key" type="password" autocomplete="off" placeholder="sk-ant-…" value="${esc(agent.key())}"></div>
+        <div class="field"><label for="ai-model">Modelo</label><select id="ai-model">${AI_MODELS.map(([v, l]) => `<option value="${v}"${v === cur ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
+        <div class="hint">La clave se guarda solo en este dispositivo (en el móvil y en el PC la pegas una vez en cada uno). Nunca se sube a GitHub ni a ningún sitio.</div>
+        <div class="err" id="ai-err"></div><button class="primary" data-a="ai-save">Guardar y empezar</button></div>`)}</div></div>`;
+  }
+  const hist = agent.history().filter((m) => !m.hidden || m.role === 'assistant');
+  const msgs = hist.map((m) => m.role === 'user'
+    ? `<div class="msg me"><div class="bub">${m.images ? `<span class="imgtag">${m.images} captura${m.images > 1 ? 's' : ''}</span>` : ''}${esc(m.text === '[captura]' ? '' : m.text).replace(/\n/g, '<br>')}</div></div>`
+    : `<div class="msg ai"><div class="bub">${mdLite(m.text || '')}${(m.actions || []).length ? `<div class="acts">${m.actions.map((a) => `<div>✓ ${esc(a)}</div>`).join('')}</div>` : ''}<div class="mt">${new Date(m.at).toLocaleString('es-ES', { weekday: 'short', hour: '2-digit', minute: '2-digit' })}</div></div></div>`).join('');
+  const live = st.chatBusy ? `<div class="msg ai"><div class="bub think">${st.chatLive.length ? `<div class="acts">${st.chatLive.map((a) => `<div>${esc(a)}</div>`).join('')}</div>` : ''}<span class="dots"><i></i><i></i><i></i></span></div></div>` : '';
+  const err = st.chatErr ? `<div class="msg ai"><div class="bub errb">${esc(st.chatErr)}</div></div>` : '';
+  const hello = !hist.length ? `<div class="msg ai"><div class="bub"><p><b>Soy tu OOQ Manager.</b></p><p>Veo tu caja, stock, tests, cuentas y plan. Dime lo que pasa ("vendí 2 oro a 30", "subí el negro a tictac") y lo apunto. Mándame capturas de las stats de Vinted y decido el test. Pregúntame qué hacer y te digo el mejor movimiento con números.</p></div></div>` : '';
+  return `<div class="toolbar"><span class="ttl">OOQ Manager</span><span style="display:flex;gap:6px"><button class="btn-o" data-a="chat-clear">${st.confirm === 'chat/all' ? '¿Borrar chat?' : 'Borrar chat'}</button><button class="btn-o" data-a="ai-setup">IA</button></span></div>
+    <div class="chatlog" id="chatlog">${hello}${msgs}${live}${err}</div>
+    <div class="quick">${QUICK.map(([l, q], i) => `<button class="chip" data-a="chat-quick" data-v="${i}"${st.chatBusy ? ' disabled' : ''}>${l}</button>`).join('')}</div>`;
+}
+async function chatSend(text) {
+  const ta = $('#comp-text');
+  const t = (text !== undefined ? text : ta ? ta.value : '').trim(), imgs = st.chatImgs.slice();
+  if ((!t && !imgs.length) || st.chatBusy) return;
+  if (ta && text === undefined) { ta.value = ''; ta.style.height = ''; }
+  st.chatImgs = []; drawImgs();
+  st.chatBusy = true; st.chatErr = ''; st.chatLive = []; renderSoon();
+  try { await agent.send(t, imgs, { onAction: (a, bad) => { st.chatLive.push((bad ? '✗ ' : '✓ ') + a); renderSoon(); } }); }
+  catch (e) { st.chatErr = e.message || String(e); }
+  st.chatBusy = false; st.chatLive = []; renderSoon();
+}
+function drawImgs() { const b = $('#comp-imgs'); if (b) b.innerHTML = st.chatImgs.map((im, i) => `<span class="cimg"><img src="data:${im.media_type};base64,${im.data}" alt=""><button data-a="chat-rmimg" data-v="${i}" aria-label="Quitar">×</button></span>`).join(''); }
+function readImage(file) {
+  return new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onload = () => { const img = new Image(); img.onload = () => {
+      const k = Math.min(1, 1400 / Math.max(img.width, img.height)), c = document.createElement('canvas');
+      c.width = Math.round(img.width * k); c.height = Math.round(img.height * k); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      res({ media_type: 'image/jpeg', data: c.toDataURL('image/jpeg', 0.85).split(',')[1] });
+    }; img.onerror = rej; img.src = fr.result; };
+    fr.onerror = rej; fr.readAsDataURL(file);
+  });
+}
+async function morningBriefing() {
+  if (!agent.key() || lsGet('lg_brief', '') === todayKey() || new Date().getHours() < 6) return;
+  lsSet('lg_brief', todayKey());
+  try {
+    const r = await agent.send('Briefing de la mañana. Cómo voy (caja, deuda, mes vs objetivo y mínimo), los 3 movimientos con más impacto de hoy con números, y qué tests tocan control. Corto y agresivo.', [], { hidden: true });
+    if (st.tab !== 'manager') { st.briefNew = true; toast('Tu briefing de hoy está listo en Manager'); }
+    if ('Notification' in window && Notification.permission === 'granted' && document.visibilityState !== 'visible') {
+      const reg = await navigator.serviceWorker?.getRegistration?.();
+      const body = (r.text || '').replace(/[*#]/g, '').split('\n').find((x) => x.trim()) || 'Tu plan de hoy está listo.';
+      if (reg) reg.showNotification('OOQ Manager', { body, icon: 'icons/icon-192.png', tag: 'brief' }); else new Notification('OOQ Manager', { body });
+    }
+  } catch (e) { lsSet('lg_brief', ''); console.warn('briefing', e); }
+  renderSoon();
 }
 
 /* ---------------- tests ---------------- */
@@ -1065,7 +1154,7 @@ document.addEventListener('click', async (e) => {
   if (e.target === sheetEl) { closeSheet(); return; }
   const b = e.target.closest('[data-a]'); if (!b) return;
   const a = b.dataset.a, v = b.dataset.v;
-  if (a !== 'del' && a !== 'del-model' && a !== 'del-order' && a !== 'del-listing' && st.confirm) { st.confirm = null; renderSoon(); }
+  if (a !== 'del' && a !== 'del-model' && a !== 'del-order' && a !== 'del-listing' && a !== 'chat-clear' && st.confirm) { st.confirm = null; renderSoon(); }
   if (SAVE[a]) {
     b.disabled = true;
     try { await SAVE[a](); } catch (err) { console.error(err); shErr('No se pudo guardar: ' + (err.message || err)); }
@@ -1098,6 +1187,22 @@ document.addEventListener('click', async (e) => {
       break;
     }
     case 'settings': openSheet('settings'); break;
+    case 'chat-send': chatSend(); break;
+    case 'chat-quick': chatSend(QUICK[Number(v)][1]); break;
+    case 'chat-rmimg': st.chatImgs.splice(Number(v), 1); drawImgs(); break;
+    case 'chat-clear': {
+      if (st.confirm === 'chat/all') { st.confirm = null; for (const m of L('chat')) await db.remove(C.chat, m.id); st.chatErr = ''; toast('Chat borrado'); }
+      else { st.confirm = 'chat/all'; setTimeout(() => { if (st.confirm === 'chat/all') { st.confirm = null; renderSoon(); } }, 3500); }
+      renderSoon(); break;
+    }
+    case 'ai-setup': st.aiSetup = !st.aiSetup; renderSoon(); break;
+    case 'ai-save': {
+      const k = ($('#ai-key') || {}).value?.trim() || '', md = ($('#ai-model') || {}).value || AI_MODELS[0][0];
+      if (!/^sk-ant-/.test(k)) { const e = $('#ai-err'); if (e) e.textContent = 'La clave empieza por sk-ant-'; break; }
+      lsSet('ooq_ai_key', k); lsSet('ooq_ai_model', md); st.aiSetup = false;
+      if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission().catch(() => {});
+      renderSoon(); toast('IA conectada'); break;
+    }
     case 'goto-plan': st.stockSeg = 'plan'; lsSet('lg_seg', 'plan'); if (st.sheet) closeSheet(); setTab('stock'); break;
     case 'moves': openSheet('moves'); break;
     case 'test': openSheet('test', { id: b.dataset.id }); break;
@@ -1154,6 +1259,7 @@ document.addEventListener('click', async (e) => {
   }
 });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && st.sheet) closeSheet(); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') morningBriefing(); });
 window.addEventListener('hashchange', () => { const h = location.hash.slice(1); if (TABS.some((t) => t[0] === h) && h !== st.tab) setTab(h); });
 
 /* ---------------- first run data ---------------- */
@@ -1242,7 +1348,12 @@ async function boot() {
   await seedIfEmpty();
   await migrate().catch((e) => console.warn('migrate', e));
   shell(); render();
+  const ta = $('#comp-text'), fi = $('#comp-file');
+  ta.addEventListener('input', () => { ta.style.height = ''; ta.style.height = Math.min(140, ta.scrollHeight) + 'px'; });
+  ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && window.matchMedia('(min-width: 900px)').matches) { e.preventDefault(); chatSend(); } });
+  fi.addEventListener('change', async () => { for (const f of [...fi.files].slice(0, 4)) { try { st.chatImgs.push(await readImage(f)); } catch {} } fi.value = ''; drawImgs(); });
   db.subscribe(() => renderSoon());
+  setTimeout(morningBriefing, 1500);
   sync.onStatus(updatePill);
   sync.start();
   setInterval(() => { if (document.visibilityState === 'visible') renderSoon(); }, 60000);
