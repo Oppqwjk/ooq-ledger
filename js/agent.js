@@ -3,7 +3,7 @@
 // Calls the Claude API straight from your device with your own key (stored only on this device).
 
 const API = 'https://api.anthropic.com/v1/messages';
-export const MODELS = [['claude-sonnet-5-5', 'Sonnet 5.5 (recomendado)'], ['claude-opus-5-5', 'Opus 5.5 (más listo, más caro)'], ['claude-haiku-5-5', 'Haiku 5.5 (más barato)']];
+export const MODES = [['auto', 'Ahorro: Haiku para apuntar, Sonnet para pensar (recomendado)'], ['sonnet', 'Siempre Sonnet (más listo, ~2× más caro)'], ['haiku', 'Siempre Haiku (lo más barato)']];
 
 const n0 = (v) => { const x = parseFloat(String(v == null ? '' : v).replace(',', '.')); return isNaN(x) ? 0 : x; };
 const r2 = (v) => Math.round(v * 100) / 100;
@@ -152,43 +152,70 @@ export function createAgent(api) {
   }
 
   /* ---------- what the agent sees on every message ---------- */
+  // Compact on purpose: every token here is paid on every call.
   function snapshot() {
-    const bz = brain(), s = S0(), cash = api.cashNow();
-    const r = (v, d = 2) => (v === Infinity || v === null || isNaN(v) ? null : Math.round(v * 10 ** d) / 10 ** d);
-    return {
-      hoy: todayKey(), hora: new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }),
-      caja: { caja_real: r(cash), pendiente_vinted: r(api.pendingVinted()), deuda_pedidos: r(api.owedTotal()), puedes_gastar: r(api.spendable()), colchon: n0(s.cushion) },
-      mes: bz.pace,
-      plan: s.plan || {},
-      mejores_movimientos: bz.moves.slice(0, 14).map((m) => `[${m.tag}] ${m.title} — ${m.why}`),
-      stock: bz.stocks.map((x) => ({ reloj: x.m.name, id: x.m.id, estado_reloj: x.m.status, estado_stock: x.status, casa: x.home, camino: x.transit, ventas_dia: r(x.rate), ventas_7d: x.d.last7, ventas_7d_anteriores: x.d.prev7, dias_stock: r(x.coverAll, 0), pedir_dhl: x.bridge, pedir_ddp: x.ddpQty, coste: r(x.cost), beneficio_venta: r(x.unitProfit), precio: x.m.listPrice, precio_1688: x.m.unitPrice, peso_g: x.m.weight, llegadas: x.arrivals, por_que: x.why })),
-      plazos: bz.lead,
-      pedido_recomendado: { lineas: bz.plan.lines.map((l) => ({ reloj: l.m.name, via: l.lane, uds: l.qty, coste: r(l.cost) })), sin_caja_para: bz.plan.skipped.map((k) => ({ reloj: k.s.m.name, via: k.lane, uds: k.want })) },
-      tests: bz.tests.map((t) => ({ reloj: t.m.name, id: t.m.id, etapa: t.stage, horas: r(t.hours, 0), vistas: t.views, favs: t.favs, ofertas: t.offers, mejor_oferta: t.best, vendidos: t.sold, nota: t.score, por_que: t.why, accion: t.act, siguiente_control_h: t.next })),
-      referencia_ganador: bz.bench, tests_corriendo: bz.running, tests_a_la_vez: bz.benchN, tests_ritmo: bz.tp,
-      cuentas: bz.acc.accs.map((a) => ({ cuenta: a.name, estado: a.status, salud: a.health, principal: a.main, anuncios_activos: a.live.length, ventas_7d: a.s7, ventas_30d: a.s30, ventas_dia: r(a.rate), retiradas_30d: a.rem30 })),
-      cuentas_necesarias: bz.need,
-      reparto: bz.dist.map((d) => `${d.k} ${d.m.name} ${d.k === 'publicar' ? 'en' : 'de'} ${d.acc}: ${d.why}`),
-      anuncios_activos: L('listings').filter((l) => l.status === 'live').map((l) => { const m = model(l.modelId), sn = (l.snaps || []).slice(-1)[0]; return { reloj: m ? m.name : '?', cuenta: l.account, precio: l.price, publicado: l.listedAt, ultimas_stats: sn || null }; }),
-      ultimas_ventas: L('sales').slice().sort((a, b) => (b.at || b.date).localeCompare(a.at || a.date)).slice(0, 12).map((v) => ({ fecha: v.date, reloj: v.modelName, precio: v.price, beneficio: v.profit, cuenta: v.account })),
-      pedidos_abiertos: L('orders').filter((o) => o.status !== 'recibido' || n0(o.owed)).map((o) => ({ fecha: o.date, via: o.lane || 'otro', estado: o.status, uds: (o.lines || []).reduce((t, l) => t + n0(l.qty), 0), debes: n0(o.owed), lineas: (o.lines || []).map((l) => `${l.qty}× ${l.name}`) })),
+    const bz = brain(), s = S0(), cash = api.cashNow(), mk = todayKey().slice(0, 7);
+    const r = (v, d = 1) => (v === Infinity || v === null || v === undefined || isNaN(v) ? undefined : Math.round(v * 10 ** d) / 10 ** d);
+    const nextMk = (() => { const [y, m] = mk.split('-').map(Number); const d = new Date(y, m, 1); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); })();
+    const p = bz.pace;
+    return prune({
+      hoy: todayKey(),
+      caja: { real: r(cash, 0), pendiente_vinted: r(api.pendingVinted(), 0), deuda: r(api.owedTotal(), 0), gastable: r(api.spendable(), 0) },
+      mes: { ventas: p.S, objetivo: p.T, minimo: p.MIN, beneficio: r(p.P, 0), objetivo_beneficio: p.PT, ritmo_dia: r(p.paceDay, 2), necesita_dia: r(p.need, 2), proyeccion: p.proj, dias_quedan: p.left },
+      plan: { [mk]: (s.plan || {})[mk], [nextMk]: (s.plan || {})[nextMk] },
+      calculos: bz.moves.slice(0, 8).map((m) => `[${m.tag}] ${m.title} — ${m.why}`),
+      stock: bz.stocks.filter((x) => x.m.status !== 'descartado' || x.home).map((x) => ({ reloj: x.m.name, id: x.m.id, e: x.m.status, st: x.status, casa: x.home, camino: x.transit || undefined, dia: r(x.rate, 2), v7: x.d.last7, v7prev: x.d.prev7, dias: r(x.coverAll, 0), dhl: x.bridge || undefined, ddp: x.ddpQty || undefined, coste: r(x.cost), benef: r(x.unitProfit), llega: x.arrivals.length ? x.arrivals.map((a) => `${a.qty}${a.lane} ${a.eta}`).join(',') : undefined, nota: x.why || undefined })),
+      plazos: { dhl: bz.lead.dhl, ddp: bz.lead.ddp },
+      pedido_sugerido: bz.plan.lines.map((l) => `${l.qty} ${l.m.name} ${l.lane} ${r(l.cost, 0)}€`), sin_caja: bz.plan.skipped.map((k) => `${k.want} ${k.s.m.name} ${k.lane}`),
+      tests: bz.tests.map((t) => ({ reloj: t.m.name, id: t.m.id, etapa: t.stage, h: r(t.hours, 0), vistas: t.views, favs: t.favs, ofertas: t.offers, mejor: t.best || undefined, vend: t.sold || undefined, casa: t.home, accion: t.act })),
+      ganador_ref: { favs: r(bz.bench.fav, 2), vistas_dia: r(bz.bench.vpd, 0), ofertas_100: r(bz.bench.opv, 1) },
+      tests_ritmo: { semana: bz.tp.perWeek, a_la_vez: bz.benchN, corriendo: bz.running, faltan_ganadores: bz.tp.winnersNeeded },
+      cuentas: bz.acc.accs.map((a) => `${a.name}: ${a.status}/${a.health}, ${a.live.length} activos, ${a.s7} ventas 7d, ${a.rem30} retiradas 30d`),
+      ventas_recientes: L('sales').slice().sort((a, b) => (b.at || b.date).localeCompare(a.at || a.date)).slice(0, 6).map((v) => `${v.date} ${v.modelName} ${v.price}€ (+${r(v.profit, 0)})`),
+      pedidos_abiertos: L('orders').filter((o) => o.status !== 'recibido' || n0(o.owed)).map((o) => `${o.date} ${o.lane || 'otro'} ${o.status}: ${(o.lines || []).map((l) => `${l.qty}× ${l.name}`).join(', ')}${n0(o.owed) ? ` · debe ${n0(o.owed)}€` : ''}`),
       bolsitas: pouches(),
-    };
+    });
+  }
+  function prune(o) {
+    if (Array.isArray(o)) { const a = o.map(prune).filter((x) => x !== undefined); return a.length ? a : undefined; }
+    if (o && typeof o === 'object') { const out = {}; for (const k in o) { const v = prune(o[k]); if (v !== undefined && v !== null && v !== '') out[k] = v; } return Object.keys(out).length ? out : undefined; }
+    return o;
   }
 
-
-
   /* ---------- the conversation ---------- */
-  const key = () => { try { return localStorage.getItem('ooq_ai_key') || ''; } catch { return ''; } };
-  const modelId = () => { try { return localStorage.getItem('ooq_ai_model') || MODELS[0][0]; } catch { return MODELS[0][0]; } };
+  const ls = (k, d) => { try { return localStorage.getItem(k) || d; } catch { return d; } };
+  const key = () => ls('ooq_ai_key', '');
+  // Ahorro: Haiku for routine (logging, screenshots), Sonnet for thinking (questions, plan, Inicio, briefing)
+  const mode = () => ls('ooq_ai_mode', 'auto');
+  const SONNET = 'claude-sonnet-5-5', HAIKU = 'claude-haiku-5-5';
+  const modelFor = (kind) => (mode() === 'sonnet' ? SONNET : mode() === 'haiku' ? HAIKU : kind === 'light' ? HAIKU : SONNET);
+  const modelId = () => modelFor('heavy');
   const history = () => L('chat').slice().sort((a, b) => a.at.localeCompare(b.at));
+  const isHeavy = (t) => /\?|^\s*(qu[eé]|c[oó]mo|cu[aá]nt|por ?qu[eé]|deber[ií]a|dime|explica|analiza|plan|estrategia|what|how|why|should)/i.test(t || '') || (t || '').length > 160;
+
+  // rough $ per million tokens, to show what you spend (check your real bill in console.anthropic.com)
+  const PRICE = { [SONNET]: [2, 10, 2.5, 0.2], [HAIKU]: [1, 5, 1.25, 0.1], 'claude-opus-5-5': [5, 25, 6.25, 0.5] };
+  function track(model, u) {
+    if (!u) return;
+    const pr = PRICE[model] || PRICE[SONNET];
+    const usd = ((u.input_tokens || 0) * pr[0] + (u.output_tokens || 0) * pr[1] + (u.cache_creation_input_tokens || 0) * pr[2] + (u.cache_read_input_tokens || 0) * pr[3]) / 1e6;
+    try {
+      const mk = new Date().toISOString().slice(0, 7), cur = JSON.parse(localStorage.getItem('ooq_ai_usage') || '{}');
+      const m = cur.month === mk ? cur : { month: mk, usd: 0, calls: 0, byDay: {} };
+      const d = new Date().toISOString().slice(0, 10);
+      m.usd += usd; m.calls += 1; m.byDay = m.byDay || {}; m.byDay[d] = (m.byDay[d] || 0) + usd;
+      localStorage.setItem('ooq_ai_usage', JSON.stringify(m));
+    } catch {}
+  }
+  const usage = () => { try { const u = JSON.parse(localStorage.getItem('ooq_ai_usage') || '{}'); return u.month === new Date().toISOString().slice(0, 7) ? u : { usd: 0, calls: 0, byDay: {} }; } catch { return { usd: 0, calls: 0, byDay: {} }; } };
 
   function apiMessages(extra) {
     const msgs = [];
-    for (const m of history().slice(-24)) {
+    for (const m of history().slice(-12)) {
       if (m.hidden) continue;
-      const text = m.role === 'assistant' && m.actions && m.actions.length ? m.text + '\n\n[Apuntado: ' + m.actions.join(' | ') + ']' : m.text;
+      let text = m.role === 'assistant' && m.actions && m.actions.length ? m.text + '\n[Apuntado: ' + m.actions.join(' | ') + ']' : m.text;
       if (!text) continue;
+      if (text.length > 700) text = text.slice(0, 700) + '…';
       const last = msgs[msgs.length - 1];
       if (last && last.role === m.role) last.content += '\n\n' + text; else msgs.push({ role: m.role, content: text });
     }
@@ -201,9 +228,11 @@ export function createAgent(api) {
     return msgs;
   }
 
-  async function call(messages, extraSystem, noTools) {
-    const body = { model: modelId(), max_tokens: 1800, system: SYSTEM + (extraSystem || '') + '\n\nDATOS (ahora mismo):\n' + JSON.stringify(snapshot()), messages };
-    if (!noTools) body.tools = TOOLS;
+  async function call(messages, opt = {}) {
+    const model = opt.model || modelFor('heavy');
+    // the fixed rules (+ tools) are cached: repeated calls pay ~10% for them
+    const body = { model, max_tokens: opt.max || 1000, system: [{ type: 'text', text: SYSTEM + (opt.extra || ''), cache_control: { type: 'ephemeral' } }, { type: 'text', text: 'DATOS (ahora mismo):\n' + JSON.stringify(snapshot()) }], messages };
+    if (!opt.noTools) body.tools = TOOLS;
     const res = await fetch(API, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-api-key': key(), 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
@@ -212,23 +241,25 @@ export function createAgent(api) {
     const j = await res.json().catch(() => ({}));
     if (!res.ok) {
       const msg = (j.error && j.error.message) || res.statusText;
-      if (res.status === 401) throw new Error('La clave de la API no vale. Revísala en el Manager → Ajustes de la IA.');
+      if (res.status === 401) throw new Error('La clave de la API no vale. Revísala en Manager → IA.');
       if (res.status === 400 && /credit|balance/i.test(msg)) throw new Error('Sin saldo en la API. Añade crédito en console.anthropic.com → Billing.');
       throw new Error('Error de la IA (' + res.status + '): ' + msg);
     }
+    track(model, j.usage);
     return j;
   }
 
-  // text: what you wrote; images: [{media_type, data}] base64; opts.hidden: not shown (morning briefing trigger)
+  // text: what you wrote; images: [{media_type, data}] base64; opts.hidden: not shown; opts.heavy: force the thinking model
   async function send(text, images = [], opts = {}) {
     if (!key()) throw new Error('Falta la clave de la API.');
     const userRec = await db.put(C.chat, { role: 'user', text: text || (images.length ? '[captura]' : ''), at: nowISO(), hidden: !!opts.hidden, images: images.length });
     const content = [...images.map((im) => ({ type: 'image', source: { type: 'base64', media_type: im.media_type, data: im.data } })), { type: 'text', text: text || 'Lee esta captura y apunta lo que veas.' }];
     const messages = apiMessages({ role: 'user', content });
+    const model = modelFor(opts.heavy || (isHeavy(text) && !images.length) ? 'heavy' : 'light');
     const actions = [];
     let out = '';
-    for (let i = 0; i < 8; i++) {
-      const r = await call(messages);
+    for (let i = 0; i < 6; i++) {
+      const r = await call(messages, { model, max: opts.hidden ? 700 : 1000 });
       const blocks = r.content || [];
       out += blocks.filter((b) => b.type === 'text').map((b) => b.text).join('\n');
       const uses = blocks.filter((b) => b.type === 'tool_use');
@@ -244,20 +275,20 @@ export function createAgent(api) {
       messages.push({ role: 'user', content: results });
       out += out ? '\n' : '';
     }
-    await db.put(C.chat, { role: 'assistant', text: out.trim(), at: nowISO(), actions, replyTo: userRec.id });
+    await db.put(C.chat, { role: 'assistant', text: out.trim(), at: nowISO(), actions, replyTo: userRec.id, model });
     return { text: out.trim(), actions };
   }
 
   // The AI reads the whole situation and picks the moves for Inicio.
   const MOVES_TASK = `
 
-TAREA AHORA: eres la pantalla de inicio. Mira toda su situación (caja, deuda, stock real y si se vende o no, tests, cuentas, ritmo del mes vs objetivo, calidad de los datos) y decide los movimientos que más le acercan a 5.000 €/mes desde HOY con lo que tiene. Los "mejores_movimientos" de DATOS son cálculos automáticos: úsalos solo si tienen sentido; descarta los que no (por ejemplo, reponer algo que tiene poco stock pero no se vende). SOLO números y stock: qué pedir, cuánto, por qué vía y cuándo; qué NO reponer; dinero parado; caja, deuda y lo que puede gastar; veredictos de tests en cuanto a pedir o no pedir; ritmo vs objetivo; datos que faltan para calcular. NADA sobre cómo publicar, fotos, portadas, títulos, precios de anuncio ni cuentas: eso lo lleva él.
+TAREA AHORA: eres la pantalla de inicio. Mira toda su situación (caja, deuda, stock real y si se vende o no, tests, ritmo del mes vs objetivo, calidad de los datos) y decide los movimientos que más le acercan a 5.000 €/mes desde HOY con lo que tiene. "calculos" son automáticos: úsalos solo si tienen sentido; descarta los que no (por ejemplo, reponer algo que tiene poco stock pero no se vende). SOLO números y stock: qué pedir, cuánto, por qué vía y cuándo; qué NO reponer; dinero parado; caja, deuda y lo que puede gastar; veredictos de tests en cuanto a pedir o no pedir; ritmo vs objetivo; datos que faltan para calcular. NADA sobre cómo publicar, fotos, portadas, títulos, precios de anuncio ni cuentas: eso lo lleva él.
 Devuelve SOLO un JSON válido, sin texto antes ni después:
-{"situacion":"2-3 frases duras y concretas con números de dónde está","movimientos":[{"tag":"Stock|Test|Caja|Datos|Ritmo","titulo":"acción concreta corta con números","porque":"una frase con el número que lo justifica","ir":"manager|stock|plan|tests|cuentas|catchup|metas|test:<id>|model:<id>"}]}
+{"situacion":"2-3 frases duras y concretas con números de dónde está","movimientos":[{"tag":"Stock|Test|Caja|Datos|Ritmo","titulo":"acción concreta corta con números","porque":"una frase con el número que lo justifica","ir":"manager|stock|plan|tests|catchup|metas|test:<id>|model:<id>"}]}
 Entre 3 y 6 movimientos, el primero el de más impacto. Cada uno tiene que poder ejecutarlo sin pensar: qué, cuánto, cuándo. Sin emojis.`;
   async function bestMoves() {
     if (!key()) throw new Error('Falta la clave de la API.');
-    const r = await call([{ role: 'user', content: 'Situación y mejores movimientos ahora mismo.' }], MOVES_TASK, true);
+    const r = await call([{ role: 'user', content: 'Situación y mejores movimientos ahora mismo.' }], { extra: MOVES_TASK, noTools: true, model: modelFor('heavy'), max: 800 });
     const txt = (r.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
     const m = txt.match(/\{[\s\S]*\}/); if (!m) throw new Error('La IA no devolvió movimientos.');
     const j = JSON.parse(m[0]);
@@ -265,5 +296,5 @@ Entre 3 y 6 movimientos, el primero el de más impacto. Cada uno tiene que poder
   }
   const dataHash = () => { const s0 = JSON.stringify({ ...snapshot(), hora: 0 }); let h = 0; for (let i = 0; i < s0.length; i++) h = (h * 31 + s0.charCodeAt(i)) | 0; return String(h); };
 
-  return { send, snapshot, findModel, run, TOOLS, key, modelId, history, bestMoves, dataHash };
+  return { send, snapshot, findModel, run, TOOLS, key, modelId, mode, history, bestMoves, dataHash, usage };
 }

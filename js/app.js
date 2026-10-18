@@ -3,7 +3,7 @@
 import * as db from './db.js';
 import * as sync from './sync.js';
 import * as B from './brain.js';
-import { createAgent, MODELS as AI_MODELS } from './agent.js';
+import { createAgent, MODES as AI_MODES } from './agent.js';
 
 const C = { settings: 'lg-settings', models: 'lg-models', sales: 'lg-sales', orders: 'lg-orders', spend: 'lg-spend', income: 'lg-income', bills: 'lg-bills', goals: 'lg-goals', listings: 'lg-listings', chat: 'lg-chat' };
 const $ = (s, r = document) => r.querySelector(s);
@@ -191,8 +191,8 @@ const acctNames = () => S0().accounts || [];
 const liveOf = (mid) => L('listings').filter((l) => l.modelId === mid && l.status === 'live');
 
 /* ---------------- state ---------------- */
-const TABS = [['inicio', 'Inicio'], ['manager', 'Manager'], ['calendario', 'P&L'], ['stock', 'Stock'], ['tests', 'Tests'], ['cuentas', 'Cuentas'], ['gastos', 'Gastos'], ['metas', 'Plan']];
-const BAR = ['inicio', 'manager', 'calendario', 'stock', 'tests', 'cuentas', 'gastos'];
+const TABS = [['inicio', 'Inicio'], ['calendario', 'P&L'], ['stock', 'Stock'], ['tests', 'Tests'], ['cuentas', 'Cuentas'], ['gastos', 'Gastos'], ['metas', 'Plan']];
+const BAR = ['inicio', 'calendario', 'stock', 'tests', 'cuentas', 'gastos'];
 const ICONS = {
   inicio: '<path d="M4 11 12 4.5l8 6.5v8.5a1.5 1.5 0 0 1-1.5 1.5H15v-6h-6v6H5.5A1.5 1.5 0 0 1 4 19.5z"/>',
   manager: '<path d="M5 5.5h14a1.5 1.5 0 0 1 1.5 1.5v9a1.5 1.5 0 0 1-1.5 1.5h-7.5L7 21v-3.5H5A1.5 1.5 0 0 1 3.5 16V7A1.5 1.5 0 0 1 5 5.5z"/><path d="M8.5 11.5h.01M12 11.5h.01M15.5 11.5h.01"/>',
@@ -248,7 +248,7 @@ function renderSoon() { if (rq) return; rq = true; requestAnimationFrame(() => {
 function render() {
   const main = $('#main'); if (!main) return;
   document.querySelectorAll('[data-a="tab"]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === st.tab)));
-  const v = { inicio: viewHome, manager: viewManager, calendario: viewCal, stock: viewStock, tests: viewTests, cuentas: viewAccounts, gastos: viewSpend, metas: viewGoals }[st.tab] || viewHome;
+  const v = { inicio: viewHome, calendario: viewCal, stock: viewStock, tests: viewTests, cuentas: viewAccounts, gastos: viewSpend, metas: viewGoals }[st.tab] || viewHome;
   brainCache = null;
   const chat = st.tab === 'manager' && !!agent.key() && !st.aiSetup;
   document.body.classList.toggle('chatmode', st.tab === 'manager');
@@ -345,7 +345,7 @@ const aiCached = () => { try { return JSON.parse(lsGet(AIM_KEY, 'null')); } catc
 async function ensureAiMoves(force) {
   if (!agent.key() || st.aiMovesBusy) return;
   const c = aiCached(), age = c ? Date.now() - c.at : Infinity, stamp = aiStamp();
-  if (!force && c && ((c.stamp === stamp && age < 60 * 60000) || age < 2 * 60000)) return;
+  if (!force && c && ((c.stamp === stamp && age < 3 * 3600000) || age < 30 * 60000)) return;
   st.aiMovesBusy = true; st.aiMovesErr = ''; renderSoon();
   try { const data = await agent.bestMoves(); lsSet(AIM_KEY, JSON.stringify({ at: Date.now(), stamp, data })); }
   catch (e) { st.aiMovesErr = e.message || String(e); }
@@ -369,8 +369,8 @@ function aiMovesPanel(bz) {
 }
 function viewHome() {
   const cm = curMonth(), pb = payback(), bz = brain();
-  setTimeout(() => ensureAiMoves(false), 50);
-  const moves = aiMovesPanel(bz);
+  const moves = panel('Mejores movimientos', movesTable(bz.moves.slice(0, 7)) + (bz.moves.length > 7 ? `<div class="foot"><button class="lnk" data-a="moves">Ver los ${bz.moves.length}</button></div>` : ''), String(bz.moves.length));
+  const exp = panel('Para tu Manager', `<div class="stack pad"><p class="lead2">Copia todos tus datos y pégalos en tu proyecto de Claude.</p><div class="btnrow"><button class="btn-g" data-a="export-ai">Copiar para Claude</button><button class="btn-o" data-a="export-ai-file">Descargar .txt</button></div></div>`);
   const caja = panel('Caja', cajaTable(), '<button class="lnk" data-a="settings">Ajustar</button>');
   const month = panel(monthName(cm), monthTable(cm));
   const open = L('orders').filter((o) => pb[o.id] && (o.status !== 'recibido' || pb[o.id].rev < pb[o.id].cost)).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 4);
@@ -380,7 +380,7 @@ function viewHome() {
   }).join('')}</tbody></table>` : empty('Nada pendiente. Al apuntar un pedido verás aquí cuánto te falta para recuperarlo.'), '<button class="lnk" data-a="goto-orders">Ver todos</button>');
   const gs = L('goals').slice().sort((a, b) => n0(a.order) - n0(b.order));
   const goals = gs.length ? panel('Metas', goalsTable(gs, true), '<button class="lnk" data-a="tab" data-v="metas">Ver</button>') : '';
-  return `<div class="cols"><div class="col">${moves}${paceBlock()}</div><div class="col">${caja}${month}${orders}${goals}</div></div>`;
+  return `<div class="cols"><div class="col">${exp}${moves}${paceBlock()}</div><div class="col">${caja}${month}${orders}${goals}</div></div>`;
 }
 function orderBody(o, pb) {
   const cost = pb.cost, rec = pb.rev, pct = cost ? Math.min(1, rec / cost) : 0, gap = cost - rec;
@@ -529,13 +529,14 @@ function mdLite(t) {
 const QUICK = [['¿Qué hago hoy?', 'Qué hago hoy: los 3 movimientos con más impacto, con números.'], ['Qué pido', '¿Qué pido ahora con mi caja? Dame el pedido exacto y por qué vía.'], ['Tests', '¿Cómo van mis tests? Veredicto de cada uno y qué hago.'], ['Cuentas', '¿Cómo reparto los anuncios entre cuentas y cuántas cuentas necesito?'], ['¿Llego al mes?', '¿Llego al objetivo del mes? Qué tengo que cambiar para llegar.']];
 function viewManager() {
   if (!agent.key() || st.aiSetup) {
-    const cur = agent.modelId();
+    const cur = agent.mode(), u = agent.usage(), days = Math.max(1, Object.keys(u.byDay || {}).length), perDay = u.usd / days;
     return `<div class="toolbar"><span class="ttl">OOQ Manager</span>${agent.key() ? '<button class="btn-o" data-a="ai-setup">Volver al chat</button>' : ''}</div>
       <div class="cols"><div class="col">${panel('Conectar la IA', `<div class="stack pad">
         <p class="lead2">El Manager es Claude dentro de tu app: ve todos tus datos, te habla, apunta lo que le dices, lee tus capturas de Vinted y cada mañana te dice qué hacer.</p>
         <ol class="steps"><li>console.anthropic.com → crea cuenta</li><li>Billing → añade 10 €</li><li>Limits → pon un límite al mes (ej. 10 €)</li><li>API Keys → Create key → cópiala</li><li>Pégala aquí abajo → Guardar</li></ol>
         <div class="field"><label for="ai-key">Clave de la API</label><input id="ai-key" type="password" autocomplete="off" placeholder="sk-ant-…" value="${esc(agent.key())}"></div>
-        <div class="field"><label for="ai-model">Modelo</label><select id="ai-model">${AI_MODELS.map(([v, l]) => `<option value="${v}"${v === cur ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
+        <div class="field"><label for="ai-model">Modo</label><select id="ai-model">${AI_MODES.map(([v, l]) => `<option value="${v}"${v === cur ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
+        ${u.calls ? `<div class="preview"><div class="kv"><span class="mut">Gastado este mes (este dispositivo)</span><b>≈ ${u.usd.toFixed(2).replace('.', ',')} $</b></div><div class="kv"><span class="mut">Llamadas</span><b>${u.calls}</b></div><div class="kv"><span class="mut">A este ritmo, al mes</span><b>≈ ${(perDay * 30).toFixed(1).replace('.', ',')} $</b></div></div>` : ''}
         <div class="hint">La clave se guarda solo en este dispositivo (en el móvil y en el PC la pegas una vez en cada uno). Nunca se sube a GitHub ni a ningún sitio.</div>
         <div class="err" id="ai-err"></div><button class="primary" data-a="ai-save">Guardar y empezar</button></div>`)}</div><div class="col">${panel('Avisos en el móvil', `<div class="stack pad"><p class="lead2">Briefing a las 9:00, tests a las 24h y 48h, stock urgente y resumen a las 21:00, por Telegram, con la app cerrada.</p><button class="ghost" data-a="notif">Cómo activarlo (5 pasos)</button></div>`)}</div></div>`;
   }
@@ -550,14 +551,14 @@ function viewManager() {
     <div class="chatlog" id="chatlog">${hello}${msgs}${live}${err}</div>
     <div class="quick">${QUICK.map(([l, q], i) => `<button class="chip" data-a="chat-quick" data-v="${i}"${st.chatBusy ? ' disabled' : ''}>${l}</button>`).join('')}</div>`;
 }
-async function chatSend(text) {
+async function chatSend(text, heavy) {
   const ta = $('#comp-text');
   const t = (text !== undefined ? text : ta ? ta.value : '').trim(), imgs = st.chatImgs.slice();
   if ((!t && !imgs.length) || st.chatBusy) return;
   if (ta && text === undefined) { ta.value = ''; ta.style.height = ''; }
   st.chatImgs = []; drawImgs();
   st.chatBusy = true; st.chatErr = ''; st.chatLive = []; renderSoon();
-  try { await agent.send(t, imgs, { onAction: (a, bad) => { st.chatLive.push((bad ? '✗ ' : '✓ ') + a); renderSoon(); } }); }
+  try { await agent.send(t, imgs, { heavy: !!heavy, onAction: (a, bad) => { st.chatLive.push((bad ? '✗ ' : '✓ ') + a); renderSoon(); } }); }
   catch (e) { st.chatErr = e.message || String(e); }
   st.chatBusy = false; st.chatLive = []; renderSoon();
 }
@@ -765,7 +766,7 @@ function sheetHTML() {
       <button class="ghost" data-a="theme" style="justify-self:start">${document.documentElement.dataset.theme === 'dark' ? 'Usar tema claro' : 'Usar tema oscuro'}</button>
       <div class="card" style="padding:14px;display:grid;gap:8px"><div class="eyebrow">Sincronización</div>
         <div style="font-size:14px">${ss.enabled ? (ss.user ? `Conectado como <b>${esc(ss.user)}</b>` : 'Sin sesión') : 'Solo en este dispositivo (sin conectar)'}${ss.enabled && ss.at ? `<div class="hint">Última sincronización ${new Date(ss.at).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}${ss.pending ? ` · ${ss.pending} cambios por subir` : ''}</div>` : ''}${ss.error ? `<div class="hint neg">${esc(ss.error)}</div>` : ''}</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">${ss.enabled ? '<button class="ghost" data-a="sync-now">Sincronizar ahora</button>' : ''}<button class="ghost" data-a="export">Descargar copia</button>${ss.enabled && ss.user ? '<button class="ghost" data-a="logout">Cerrar sesión</button>' : ''}</div></div>`;
+        <div style="display:flex;gap:8px;flex-wrap:wrap">${ss.enabled ? '<button class="ghost" data-a="sync-now">Sincronizar ahora</button>' : ''}<button class="ghost" data-a="export-ai">Copiar para Claude</button><button class="ghost" data-a="export">Descargar copia</button>${ss.enabled && ss.user ? '<button class="ghost" data-a="logout">Cerrar sesión</button>' : ''}</div></div>`;
   }
   if (kind === 'moves') return head('MEJORES MOVIMIENTOS') + movesTable(brain().moves);
   if (kind === 'notif') return head('AVISOS EN EL MÓVIL') + `<div class="hint">Te llegan por Telegram aunque la app esté cerrada: briefing a las 9:00 escrito por la IA, controles de 24h y 48h de cada test, stock a punto de romperse, deuda y resumen a las 21:00. Lo envía un proceso gratis de GitHub cada hora.</div>
@@ -1196,6 +1197,28 @@ function openOrderFor(lines, lane) {
 }
 async function listingsOf(mid, acc) { return L('listings').filter((l) => l.modelId === mid && l.status === 'live' && (!acc || l.account === acc)); }
 
+// Everything Claude needs to manage the business, in one paste.
+function exportForClaude() {
+  const snap = agent.snapshot() || {};
+  const months = [shiftMonth(curMonth(), -2), shiftMonth(curMonth(), -1), curMonth()].map((mk) => { const p = parts(mk); return `${mk}: ${p.nSales} ventas, beneficio ${Math.round(p.net)} €, flujo ${Math.round(p.flow)} €`; });
+  const perModel = L('models').filter((m) => m.status !== 'descartado').map((m) => {
+    const ss = L('sales').filter((v) => v.modelId === m.id), d30 = ss.filter((v) => v.date >= shiftDay(todayKey(), -29));
+    return `${m.name} [${m.status}]: ${ss.length} ventas total, ${d30.length} en 30 días, precio medio ${d30.length ? Math.round(sum(d30.map((v) => n0(v.price))) / d30.length * 100) / 100 : '-'} €, coste ${costOf(m)} €${isEst(m) ? ' (estimado)' : ''}, 1688 ${m.unitPrice || '?'} €, peso ${m.weight || '?'} g`;
+  });
+  const t = new Date();
+  return `OOQ LEDGER · export ${todayKey()} ${pad(t.getHours())}:${pad(t.getMinutes())}\n` +
+    `Datos de mi negocio de relojes. "calculos" y "st" (estado de stock) los calcula la app. Dime los mejores movimientos de stock y números.\n\n` +
+    `MESES\n${months.join('\n')}\n\nPOR RELOJ\n${perModel.join('\n')}\n\nDATOS\n${JSON.stringify(snap)}`;
+}
+async function copyText(txt) {
+  try { await navigator.clipboard.writeText(txt); return true; } catch {}
+  const ta = document.createElement('textarea'); ta.value = txt; ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.select();
+  let ok = false; try { ok = document.execCommand('copy'); } catch {} ta.remove(); return ok;
+}
+function downloadText(name, txt) {
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([txt], { type: 'text/plain;charset=utf-8' })); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+}
 function exportBackup() {
   const data = JSON.stringify({ app: 'ooq-ledger', at: nowISO(), records: db.exportRecords().filter((r) => r.col.startsWith('lg-')) }, null, 1);
   const a = document.createElement('a');
@@ -1246,7 +1269,7 @@ document.addEventListener('click', async (e) => {
     }
     case 'settings': openSheet('settings'); break;
     case 'chat-send': chatSend(); break;
-    case 'chat-quick': chatSend(QUICK[Number(v)][1]); break;
+    case 'chat-quick': chatSend(QUICK[Number(v)][1], true); break;
     case 'chat-rmimg': st.chatImgs.splice(Number(v), 1); drawImgs(); break;
     case 'chat-clear': {
       if (st.confirm === 'chat/all') { st.confirm = null; for (const m of L('chat')) await db.remove(C.chat, m.id); st.chatErr = ''; toast('Chat borrado'); }
@@ -1255,14 +1278,16 @@ document.addEventListener('click', async (e) => {
     }
     case 'ai-setup': st.aiSetup = !st.aiSetup; renderSoon(); break;
     case 'ai-save': {
-      const k = ($('#ai-key') || {}).value?.trim() || '', md = ($('#ai-model') || {}).value || AI_MODELS[0][0];
+      const k = ($('#ai-key') || {}).value?.trim() || '', md = ($('#ai-model') || {}).value || 'auto';
       if (!/^sk-ant-/.test(k)) { const e = $('#ai-err'); if (e) e.textContent = 'La clave empieza por sk-ant-'; break; }
-      lsSet('ooq_ai_key', k); lsSet('ooq_ai_model', md); st.aiSetup = false;
+      lsSet('ooq_ai_key', k); lsSet('ooq_ai_mode', md); st.aiSetup = false;
       if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission().catch(() => {});
       renderSoon(); toast('IA conectada'); break;
     }
     case 'goto-plan': st.stockSeg = 'plan'; lsSet('lg_seg', 'plan'); if (st.sheet) closeSheet(); setTab('stock'); break;
     case 'moves': openSheet('moves'); break;
+    case 'export-ai': { const ok = await copyText(exportForClaude()); toast(ok ? 'Copiado · pégalo en tu proyecto de Claude' : 'No se pudo copiar: usa Descargar .txt'); break; }
+    case 'export-ai-file': downloadText('ooq-' + todayKey() + '.txt', exportForClaude()); toast('Descargado · súbelo a tu proyecto de Claude'); break;
     case 'ai-moves': ensureAiMoves(true); break;
     case 'catchup': openSheet('catchup'); break;
     case 'notif': openSheet('notif'); break;
@@ -1320,7 +1345,6 @@ document.addEventListener('click', async (e) => {
   }
 });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && st.sheet) closeSheet(); });
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') morningBriefing(); });
 window.addEventListener('hashchange', () => { const h = location.hash.slice(1); if (TABS.some((t) => t[0] === h) && h !== st.tab) setTab(h); });
 
 /* ---------------- first run data ---------------- */
@@ -1414,7 +1438,7 @@ async function boot() {
   ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && window.matchMedia('(min-width: 900px)').matches) { e.preventDefault(); chatSend(); } });
   fi.addEventListener('change', async () => { for (const f of [...fi.files].slice(0, 4)) { try { st.chatImgs.push(await readImage(f)); } catch {} } fi.value = ''; drawImgs(); });
   db.subscribe(() => renderSoon());
-  setTimeout(morningBriefing, 1500);
+
   sync.onStatus(updatePill);
   sync.start();
   setInterval(() => { if (document.visibilityState === 'visible') renderSoon(); }, 60000);

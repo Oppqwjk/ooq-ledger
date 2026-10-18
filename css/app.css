@@ -191,7 +191,7 @@ table.xl { width: 100%; border-collapse: collapse; }
 
 /* bottom tab bar (phone): floating white bar with icons */
 .tabbar { position: fixed; left: max(10px, env(safe-area-inset-left, 0px)); right: max(10px, env(safe-area-inset-right, 0px)); bottom: calc(10px + env(safe-area-inset-bottom, 0px)); z-index: 20;
-  background: var(--sheet); border-radius: 22px; box-shadow: 0 8px 30px rgba(17, 24, 39, .12); padding: 6px; display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+  background: var(--sheet); border-radius: 22px; box-shadow: 0 8px 30px rgba(17, 24, 39, .12); padding: 6px; display: grid; grid-template-columns: repeat(6, 1fr); gap: 2px; }
 .tabbar button { background: none; border: 0; padding: 7px 0 6px; color: var(--faint); font-size: 10.5px; font-weight: 700; border-radius: 16px; display: grid; justify-items: center; gap: 3px; position: relative; min-width: 0; }
 .tabbar button svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
 .tabbar button span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
