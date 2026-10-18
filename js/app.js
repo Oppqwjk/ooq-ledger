@@ -207,7 +207,7 @@ const liveOf = (mid) => L('listings').filter((l) => l.modelId === mid && l.statu
 
 /* ---------------- state ---------------- */
 const TABS = [['calendario', 'P&L'], ['stock', 'Stock'], ['tests', 'Tests'], ['gastos', 'Gastos'], ['metas', 'Plan'], ['cuentas', 'Cuentas']];
-const BAR = ['calendario', 'stock', 'tests', 'gastos', 'metas'];
+const BAR = ['calendario', 'stock', 'tests', 'gastos']; // Plan and Cuentas live in Ajustes
 const ICONS = {
   inicio: '<path d="M4 11 12 4.5l8 6.5v8.5a1.5 1.5 0 0 1-1.5 1.5H15v-6h-6v6H5.5A1.5 1.5 0 0 1 4 19.5z"/>',
   manager: '<path d="M5 5.5h14a1.5 1.5 0 0 1 1.5 1.5v9a1.5 1.5 0 0 1-1.5 1.5h-7.5L7 21v-3.5H5A1.5 1.5 0 0 1 3.5 16V7A1.5 1.5 0 0 1 5 5.5z"/><path d="M8.5 11.5h.01M12 11.5h.01M15.5 11.5h.01"/>',
@@ -229,7 +229,7 @@ const st = {
 function shell() {
   app.innerHTML = `<header class="ribbon"><div class="wrap rib-in">
       <div class="brand"><img src="icons/icon-192.png" alt=""><b>OOQ</b></div>
-      <nav class="toptabs" aria-label="Secciones">${TABS.map(([k, l]) => `<button data-a="tab" data-v="${k}">${l}</button>`).join('')}</nav>
+      <nav class="toptabs" aria-label="Secciones">${TABS.filter(([k]) => BAR.includes(k)).map(([k, l]) => `<button data-a="tab" data-v="${k}">${l}</button>`).join('')}</nav>
       <div class="top-r"><button class="syncpill" data-a="settings" id="syncpill"><i></i><span>Local</span></button><button class="iconbtn addtop" data-a="add" aria-label="Añadir"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
       <button class="iconbtn" data-a="settings" aria-label="Ajustes"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button></div>
     </div></header>
@@ -770,12 +770,21 @@ function dataAlerts() {
   if (noW.length) items.push(`<button class="alert" data-a="model" data-id="${esc(noW[0].id)}"><b>Falta el peso de ${noW.length} reloj${noW.length === 1 ? '' : 'es'}</b><span>${esc(noW.map((m) => m.name).join(', '))}</span></button>`);
   return items.length ? `<div class="alerts">${items.join('')}</div>` : '';
 }
+function viewPnlSimple() {
+  const mk = st.month, a = monthStats(mk), g = goalFor(mk), fix = salesToFix().length;
+  const tile = (lbl, big, sub, c2 = '') => `<div class="kpi ${c2}"><span class="k-l">${lbl}</span><b class="k-v">${big}</b><span class="k-s">${sub}</span></div>`;
+  return `<div class="toolbar">${mnav()}<div class="tb-r"><button class="btn-g" data-a="add" data-mode="venta" data-date="${st.selDay}">+ Venta</button><button class="btn-o" data-a="add" data-mode="gasto" data-date="${st.selDay}">+ Gasto</button><button class="btn-o" data-a="export-ai">Copiar para Claude</button><button class="ghost" data-a="stock-more">Ver más</button></div></div>
+    ${fix ? `<div class="alerts"><button class="alert" data-a="orphans"><b>${fix} venta${fix === 1 ? '' : 's'} sin reloj o sin coste</b><span>toca para arreglarlas</span></button></div>` : ''}
+    <div class="kpis k3">${tile('Beneficio', `<span class="${a.net < 0 ? 'neg' : ''}">${eur(a.net)}</span>`, `${pbar(a.net / g, a.net >= g ? 'won' : '')}<span>${Math.max(0, Math.round(a.net / g * 100))}% de ${eur(g)}</span>`, 'hero')}${tile('Ventas', String(a.n), `vendido ${eur(a.rev)}`)}${tile('Ticket medio', eur(a.ticket), 'por venta')}</div>
+    <div class="g2 pnl"><div class="col"><div class="o1">${panel('Beneficio por día', calGrid2(mk))}</div></div><div class="col"><div class="o2">${dayPanel2()}</div><div class="o3">${panel('Qué pedir', `<div class="todos">${todoLines(plan())}</div><div class="foot"><button class="lnk" data-a="tab" data-v="stock">Ver stock</button></div>`)}</div></div></div>`;
+}
 function viewPnl() {
+  if (!st.stockMore) { st.calMode = 'profit'; return viewPnlSimple(); }
   const mk = st.month, mode = st.calMode;
   const pb = payback(), open = L('orders').filter((o) => pb[o.id] && (o.status !== 'recibido' || pb[o.id].rev < pb[o.id].cost)).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 4);
   const ordersP = panel('Pedidos por recuperar', open.length ? `<table class="xl list"><tbody>${open.map((o) => { const r = pb[o.id], p = r.cost ? r.rev / r.cost : 0; return `<tr class="click" data-a="order" data-id="${esc(o.id)}"><td>${shortDate(o.date)} · ${r.units} uds<span class="sub">${o.status === 'recibido' ? `${r.sold} vendidos` : 'llega ' + dShort(B.etaOf(o, brain().lead))}${n0(o.owed) ? ` · <b class="neg">debes ${eur(n0(o.owed))}</b>` : ''}</span></td><td class="n barcell">${pbar(p)}<span>${Math.round(p * 100)}% de ${eur(r.cost)}</span></td></tr>`; }).join('')}</tbody></table>` : empty('Nada por recuperar.'));
   return `<div class="toolbar">${mnav()}<div class="seg sm"><button data-a="calmode" data-v="profit" aria-pressed="${mode === 'profit'}">Beneficio</button><button data-a="calmode" data-v="units" aria-pressed="${mode === 'units'}">Ventas</button><button data-a="calmode" data-v="cash" aria-pressed="${mode === 'cash'}">Banco</button></div>
-      <div class="tb-r"><button class="btn-g" data-a="add" data-mode="venta" data-date="${st.selDay}">+ Venta</button><button class="btn-o" data-a="add" data-mode="gasto" data-date="${st.selDay}">+ Gasto</button><button class="btn-o" data-a="export-ai">Copiar para Claude</button></div></div>
+      <div class="tb-r"><button class="btn-g" data-a="add" data-mode="venta" data-date="${st.selDay}">+ Venta</button><button class="btn-o" data-a="add" data-mode="gasto" data-date="${st.selDay}">+ Gasto</button><button class="btn-o" data-a="export-ai">Copiar para Claude</button><button class="ghost" data-a="stock-more">Ver menos</button></div></div>
     ${dataAlerts()}${kpis(mk)}
     <div class="g2 pnl"><div class="col"><div class="o1">${panel(mode === 'profit' ? 'Beneficio por día' : mode === 'units' ? 'Ventas por día' : 'Banco: entra − sale por día', calGrid2(mk))}</div><div class="o4">${panel('Ingresos, beneficio y ROI por mes', monthsChart2())}</div><div class="o6">${panel('Total del mes', monthTable(mk))}</div></div>
       <div class="col"><div class="o2">${dayPanel2()}</div><div class="o3">${insights(mk)}</div><div class="o5">${topWatches(mk)}</div><div class="o7">${ordersP}</div><div class="o8">${milestonesCard()}</div></div></div>`;
@@ -847,15 +856,16 @@ function ordersPanel() {
   }).join('')}</tbody></table>` : empty('Aún no hay pedidos.'), '<button class="lnk" data-a="add" data-mode="pedido">+ Pedido</button>');
 }
 // Simple stock: what to order (one line per watch) and your watches ranked by how fast they sell. "Ver más" = the full planner.
-function viewStockSimple() {
-  const pl = plan(), t = todayKey(), pc = pouchCost();
-  const fam = {}; for (const F of pl.fams) fam[F.name] = F;
-  const lines = pl.fams.map((F) => {
+function todoLines(pl) {
+  return pl.fams.map((F) => {
     const o = F.order, when = !o || o.beyond ? null : o.now ? 'hoy' : dShort(o.date);
     const what = !F.R ? 'aún sin ritmo' : !when ? 'nada, tienes para +90 días' : `pide ${o.qty}${o.split.length > 1 ? ` (${o.split.map((p) => `${p.qty} ${esc(p.m.name.replace(/^watch \d\s*/i, ''))}`).join(', ')})` : ''}`;
     const gap = F.gap && F.gap.days ? `<span class="warn">sin stock hasta el ${dShort(F.gap.to)}, ya viene</span>` : '';
     return `<div class="todo${o && o.now ? ' now' : ''}">${thumb(F.members[0] && F.members[0].m, 42)}<div><b>${esc(F.name)}: ${when ? (when === 'hoy' ? '<span class="neg">' + what + ' hoy</span>' : what + ' el ' + when) : what}</b><span class="mut">${o && !o.beyond ? `${eur(o.cost)} · llega ~${dShort(o.arrives)}${o.ok ? '' : ' · <span class="neg">no te llega la caja</span>'}` : ''}${gap ? (o && !o.beyond ? ' · ' : '') + gap : ''}</span></div>${o && o.now ? `<button class="btn-g" data-a="plan-order2" data-v="${esc(F.name)}">Crear pedido</button>` : ''}</div>`;
   }).join('') || empty('Aún no hay ganadores con ventas.');
+}
+function viewStockSimple() {
+  const pl = plan(), t = todayKey(), pc = pouchCost(), lines = todoLines(pl);
   const rows = L('models').map((m) => ({ m, r: stockOf(m.id) })).filter(({ m, r }) => r && r.m.status !== 'descartado' && (r.m.status === 'ganador' || n0(m.home) || n0(m.transit)))
     .sort((a, b) => b.r.rate - a.r.rate || n0(b.m.home) - n0(a.m.home));
   const list = rows.map(({ m, r }) => {
@@ -983,7 +993,9 @@ function viewTests() {
     <td class="n">${t.ls.length ? hh(t.hours) : '·'}</td><td class="n">${t.ls.length ? t.views : '·'}</td><td class="n">${t.views ? pct(t.favRate) : '·'}</td><td class="n">${t.ls.length ? t.offers + (t.best ? `<span class="sub">${t.best} €</span>` : '') : '·'}</td>
     <td class="n barcell">${t.ls.length ? pbar(t.score / 100, t.score >= 70 ? 'won' : '') + `<span>${t.score}</span>` : '·'}</td></tr>`).join('')}</tbody></table></div><div class="foot">Toca un test para meter stats, cambiar precio o decidir.</div>`
     : empty(`No hay tests. Necesitas ${brain().tp.perWeek} esta semana: los ganadores nuevos salen de aquí.`);
-  return `<div class="toolbar"><span class="ttl">Tests</span><button class="btn-g" data-a="newtest">+ Test nuevo</button></div>
+  if (!st.stockMore) return `<div class="toolbar"><span class="ttl">Tests</span><div class="tb-r"><button class="btn-g" data-a="newtest">+ Test nuevo</button><button class="ghost" data-a="stock-more">Ver más</button></div></div>
+    <div class="g2s">${panel('En test', list)}${panel('Regla', `<div class="ins"><div>48h sin ofertas → <b class="neg">fuera</b></div><div>1 venta o 2 ofertas → <b class="pos">ganador</b>: entra solo en Qué pedir</div></div>`)}</div>`;
+  return `<div class="toolbar"><span class="ttl">Tests</span><div class="tb-r"><button class="btn-g" data-a="newtest">+ Test nuevo</button><button class="ghost" data-a="stock-more">Ver menos</button></div></div>
     <div class="cols wide"><div class="col">${panel('En test', list)}</div><div class="col">${panel('Banco de tests', bench)}${panel('Reglas rápidas', rules)}</div></div>`;
 }
 
@@ -1143,7 +1155,7 @@ function sheetHTML() {
       <button class="ghost" data-a="theme" style="justify-self:start">${document.documentElement.dataset.theme === 'dark' ? 'Usar tema claro' : 'Usar tema oscuro'}</button>
       <div class="card" style="padding:14px;display:grid;gap:8px"><div class="eyebrow">Sincronización</div>
         <div style="font-size:14px">${ss.enabled ? (ss.user ? `Conectado como <b>${esc(ss.user)}</b>` : 'Sin sesión') : 'Solo en este dispositivo (sin conectar)'}${ss.enabled && ss.at ? `<div class="hint">Última sincronización ${new Date(ss.at).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}${ss.pending ? ` · ${ss.pending} cambios por subir` : ''}</div>` : ''}${ss.error ? `<div class="hint neg">${esc(ss.error)}</div>` : ''}</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">${ss.enabled ? '<button class="ghost" data-a="sync-now">Sincronizar ahora</button>' : ''}<button class="ghost" data-a="export-ai">Copiar para Claude</button><button class="ghost" data-a="import">Importar ventas (CSV)</button><button class="ghost" data-a="export">Descargar copia</button>${ss.enabled && ss.user ? '<button class="ghost" data-a="logout">Cerrar sesión</button>' : ''}</div></div>`;
+        <div style="display:flex;gap:8px;flex-wrap:wrap">${ss.enabled ? '<button class="ghost" data-a="sync-now">Sincronizar ahora</button>' : ''}<button class="ghost" data-a="export-ai">Copiar para Claude</button><button class="ghost" data-a="tab" data-v="metas">Plan y metas</button><button class="ghost" data-a="tab" data-v="cuentas">Cuentas</button><button class="ghost" data-a="import">Importar ventas (CSV)</button><button class="ghost" data-a="export">Descargar copia</button>${ss.enabled && ss.user ? '<button class="ghost" data-a="logout">Cerrar sesión</button>' : ''}</div></div>`;
   }
   if (kind === 'import') {
     const accs = acctNames(), main = brain().acc.mainName || accs[0], other = accs.find((a) => a !== main) || main;
@@ -1261,8 +1273,7 @@ function saleBody(ctx) {
     <div id="f-photo" class="f-photo"></div><div class="hint" id="f-esthint"></div>
     <label class="check"><input type="checkbox" id="f-pouch"${lsGet('lg_pouch', '1') === '1' ? ' checked' : ''}> Va con bolsita (${eur(pouchCost())} · quedan ${pouches()})</label>
     <div class="fields2">${dateFld('f-date', ctx.date)}<div class="field"><label for="f-acc">Cuenta</label><select id="f-acc">${accs.map((a) => `<option>${esc(a)}</option>`).join('')}</select></div></div>
-    <label class="check"><input type="checkbox" id="f-dec" checked> Restar 1 del stock en casa</label>
-    <label class="check"><input type="checkbox" id="f-relist" checked> Lo vuelvo a publicar en la misma cuenta</label>
+    <input type="checkbox" id="f-dec" checked hidden><input type="checkbox" id="f-relist" hidden>
     <div class="preview"><div class="kv"><span class="mut">Beneficio</span><b id="f-prev">—</b></div><div class="kv"><span class="mut">Va a pendiente en Vinted</span><b id="f-cash">—</b></div></div><div class="err" id="sh-err"></div>
     <button class="primary" data-a="save-sale">Guardar venta</button>`;
 }
@@ -1754,7 +1765,7 @@ document.addEventListener('click', async (e) => {
     return;
   }
   switch (a) {
-    case 'tab': setTab(v); break;
+    case 'tab': if (st.sheet) closeSheet(); setTab(v); break;
     case 'goto-orders': st.stockSeg = 'pedidos'; lsSet('lg_seg', 'pedidos'); setTab('stock'); break;
     case 'mprev': case 'mnext': { st.month = shiftMonth(st.month, a === 'mprev' ? -1 : 1); const t = todayKey(); st.selDay = t.startsWith(st.month) ? t : st.month + '-01'; renderSoon(); break; }
     case 'day': st.selDay = v; renderSoon(); break;
