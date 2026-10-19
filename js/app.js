@@ -997,7 +997,7 @@ function viewListings() {
   const live = (a) => ls.filter((l) => l.account === a && l.status === 'live').sort((x, y) => y.listedAt.localeCompare(x.listedAt));
   const cols = accs.map((a) => panel(`${esc(a)} · activos`, `<div class="llist">${live(a).map((l) => listingRow(l, bench)).join('') || empty('Nada publicado apuntado.')}</div>`, `<button class="lnk" data-a="anuncio-new" data-v="${esc(a)}">+ Anuncio</button>`)).join('');
   const sold = ls.filter((l) => l.status === 'sold').sort((x, y) => (y.soldAt || '').localeCompare(x.soldAt || '')).slice(0, 12);
-  return `<div class="toolbar"><div class="ttl">Anuncios</div><div class="tb-r"><button class="btn-g" data-a="anuncio-new">+ Anuncio publicado</button></div></div>
+  return `<div class="toolbar"><div class="ttl">Anuncios</div><div class="tb-r"><button class="btn-o" data-a="fotos">Fotos IA</button><button class="btn-g" data-a="anuncio-new">+ Anuncio publicado</button></div></div>
     ${accCards}
     <div class="g2"><div class="col"><div class="accs2">${cols}</div>${panel('Vendidos', `<div class="llist">${sold.map((l) => listingRow(l, bench)).join('') || empty('Cuando marques un anuncio como vendido sale aquí con lo que tardó y con cuántas vistas y likes.')}</div>`)}</div>
     <div class="col">${bestTimePanel()}${panel('Cómo se puntúa', `<div class="ins"><div><b>A</b> muy bueno · <b>B</b> bueno · <b>C</b> normal · <b>D</b> flojo</div><div class="mut sm2">Likes por vista (50%), vistas por día (30%) y ofertas (20%), comparado con ${bench.learned ? `cómo estaban tus anuncios cuando se vendieron (${bench.n} ventas)` : 'valores de arranque hasta que tengas 3 ventas apuntadas desde aquí'}. * = menos de 20 vistas, aún poco fiable.</div></div>`)}</div></div>`;
@@ -1041,6 +1041,57 @@ function listingsData() {
   };
 }
 
+
+/* ================= AI photos (Google AI Studio / Gemini image) ================= */
+// Your 4 template photos (pillow, wrist front, wrist side, clasp) stay on this device; each one is re-shot with the new watch.
+const AIK = 'ooq_gem_key', AIM2 = 'ooq_gem_model', TPL = 'ooq_gem_tpl';
+const gemKey = () => lsGet(AIK, ''), gemModel = () => lsGet(AIM2, 'gemini-2.5-flash-image');
+const tpls = () => { try { return JSON.parse(lsGet(TPL, '[]')); } catch { return []; } };
+function shrink(file, max = 1024) {
+  return new Promise((res, rej) => { const img = new Image(), url = URL.createObjectURL(file); img.onload = () => { const k = Math.min(1, max / Math.max(img.width, img.height)), c = document.createElement('canvas'); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(url); res(c.toDataURL('image/jpeg', 0.88)); }; img.onerror = rej; img.src = url; });
+}
+const b64 = (d) => d.split(',')[1];
+const AI_PROMPT = (extra) => `The FIRST image is the SCENE TEMPLATE. The other images are product photos of the NEW WATCH.
+Task: recreate the SCENE TEMPLATE exactly, but with the NEW WATCH instead of the watch that is in it.
+Keep identical: background, camera angle, framing, crop, light, shadows, and the hand/wrist position (if there is one).
+The watch must be exactly the NEW WATCH from the product photos: same case shape, colors, dial layout, hands, markers, bracelet or strap, and the exact same printed text and logos. Do not invent, remove or misspell any text. Correct proportions and size on the wrist or pillow.
+Change only these to match the NEW WATCH: if there is a sleeve, change its color/fabric to one that matches the watch and looks premium (for gold: black or chocolate; for silver: navy or grey; for colorful dials: neutral cream or charcoal). If there is a watch pillow, change its color to a soft neutral that matches the watch.
+Realism: real contact shadows, the watch sits on the skin or pillow, no floating. Real phone photo look, natural grain, not a 3D render, no studio look. Square image.${extra ? '\nExtra: ' + extra : ''}`;
+async function gemImage(tpl, prods, extra) {
+  const parts = [{ text: AI_PROMPT(extra) }, { inline_data: { mime_type: 'image/jpeg', data: b64(tpl) } }, ...prods.map((d) => ({ inline_data: { mime_type: 'image/jpeg', data: b64(d) } }))];
+  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(gemModel())}:generateContent`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': gemKey() }, body: JSON.stringify({ contents: [{ role: 'user', parts }], generationConfig: { responseModalities: ['IMAGE', 'TEXT'] } }) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error((j.error && j.error.message) || 'Error ' + r.status);
+  const p = ((j.candidates || [])[0] || {}).content?.parts || [], im = p.find((x) => x.inlineData || x.inline_data);
+  if (!im) throw new Error('No devolvió imagen' + (p.find((x) => x.text) ? ': ' + p.find((x) => x.text).text.slice(0, 120) : ''));
+  const d = im.inlineData || im.inline_data; return `data:${d.mimeType || d.mime_type || 'image/png'};base64,${d.data}`;
+}
+function fotosSheet(ctx) {
+  const t = tpls(), ms = pickModels();
+  const prods = ctx.prods || [], res = ctx.res || [];
+  return head('FOTOS IA') + `<div class="hint">Subes las fotos del reloj nuevo (1688) → te hace tus ${t.length || 4} fotos de plantilla con ese reloj: mismo fondo y pose, manga y cojín a juego.</div>
+    <details${gemKey() ? '' : ' open'}><summary class="eyebrow">Clave de Google AI Studio${gemKey() ? ' · guardada' : ''}</summary><div class="fields2">${fld('g-key', 'API key (solo se guarda en este dispositivo)', gemKey(), 'autocomplete="off" type="password"')}${fld('g-model', 'Modelo', gemModel(), 'autocomplete="off"')}</div><button class="btn-o" data-a="g-savekey">Guardar clave</button></details>
+    <div class="field"><span class="lb">Plantillas (${t.length})</span><div class="gthumbs">${t.map((d) => `<img src="${d}" alt="">`).join('') || '<span class="mut sm2">Sube tus 4 fotos plantilla (cojín, muñeca de frente, de lado, cierre). Se quedan guardadas.</span>'}</div><label class="btn-o filebtn">${t.length ? 'Cambiar plantillas' : 'Subir plantillas'}<input type="file" accept="image/*" multiple id="g-tpl" hidden></label></div>
+    <div class="field"><span class="lb">Fotos del reloj nuevo (1688, hasta 5)</span><div class="gthumbs">${prods.map((d) => `<img src="${d}" alt="">`).join('')}</div><label class="btn-g filebtn">${prods.length ? 'Cambiar fotos' : 'Subir fotos de 1688'}<input type="file" accept="image/*" multiple id="g-prod" hidden></label></div>
+    ${fld('g-extra', 'Algo extra (opcional)', ctx.extra || '', 'autocomplete="off" placeholder="Ej. manga de traje negro"')}
+    <div class="err" id="sh-err">${esc(ctx.err || '')}</div><button class="primary" data-a="g-run"${ctx.busy ? ' disabled' : ''}>${ctx.busy ? `Generando ${ctx.done || 0}/${t.length}…` : `Generar ${t.length || ''} fotos`}</button>
+    ${res.length ? `<div class="gres">${res.map((r, i) => r.err ? `<div class="gerr">Plantilla ${i + 1}: ${esc(r.err)}</div>` : `<figure><img src="${r.img}" alt=""><figcaption><a class="btn-o" download="reloj-${i + 1}.png" href="${r.img}">Descargar</a><button class="ghost" data-a="g-photo" data-v="${i}">Foto del reloj</button></figcaption></figure>`).join('')}</div>
+      <div class="field"><label for="g-model-sel">Reloj para "Foto del reloj"</label><select id="g-model-sel">${ms.map((m) => `<option value="${esc(m.id)}">${esc(m.name)}</option>`).join('')}</select></div><div class="hint">Revisa con zoom el texto de la esfera antes de publicar.</div>` : ''}`;
+}
+async function runFotos() {
+  const c = st.sheet.ctx, t = tpls();
+  c.extra = sv('g-extra');
+  if (!gemKey()) { c.err = 'Pon tu API key de Google AI Studio.'; return redrawSheet(); }
+  if (!t.length) { c.err = 'Sube tus fotos plantilla.'; return redrawSheet(); }
+  if (!(c.prods || []).length) { c.err = 'Sube las fotos del reloj nuevo.'; return redrawSheet(); }
+  c.err = ''; c.busy = true; c.done = 0; c.res = []; redrawSheet();
+  await Promise.all(t.map(async (tp, i) => {
+    try { c.res[i] = { img: await gemImage(tp, c.prods, c.extra) }; } catch (e) { c.res[i] = { err: e.message || String(e) }; }
+    c.done++; if (st.sheet && st.sheet.ctx === c) redrawSheet();
+  }));
+  c.busy = false; if (st.sheet && st.sheet.ctx === c) redrawSheet();
+}
+
 /* ================= tests: a rating that tells you if it's good ================= */
 function testOf(m, bench) {
   const ls = L('listings').filter((l) => l.modelId === m.id && l.listedAt).sort((a, b) => a.listedAt.localeCompare(b.listedAt));
@@ -1070,7 +1121,7 @@ function viewTests2() {
       <div class="btnrow">${t.ls.length ? `<button class="btn-o" data-a="anuncio" data-id="${esc(t.ls[t.ls.length - 1].id)}">Meter stats</button>` : `<button class="btn-o" data-a="anuncio-new" data-id="${esc(t.m.id)}">Lo he publicado</button>`}
       <button class="btn-g" data-a="test-win2" data-id="${esc(t.m.id)}">Ganador</button><button class="danger sm" data-a="test-kill" data-id="${esc(t.m.id)}">Fuera</button></div></section>`;
   };
-  return `<div class="toolbar"><div class="ttl">Tests</div><div class="tb-r"><span class="mut sm2">${ts.length} en test · sin límite</span><button class="btn-g" data-a="newtest">+ Test nuevo</button></div></div>
+  return `<div class="toolbar"><div class="ttl">Tests</div><div class="tb-r"><span class="mut sm2">${ts.length} en test · sin límite</span><button class="btn-o" data-a="fotos">Fotos IA</button><button class="btn-g" data-a="newtest">+ Test nuevo</button></div></div>
     <div class="tcards">${ts.map(card).join('') || `<section class="panel">${empty('No hay tests. Sube un reloj nuevo y apúntalo aquí: la nota sale de sus vistas y likes.')}</section>`}</div>
     ${panel('Cómo funciona', `<div class="ins"><div>Publica → mete vistas y likes cuando quieras (1 toque) → nota de <b>A</b> a <b>D</b>.</div><div>A las 48h: nota A/B, 2 ofertas o 1 venta → <b class="pos">ganador</b>. Nota D → <b class="neg">fuera</b>. Tú decides con los botones.</div><div class="mut sm2">La nota compara con ${bench.learned ? `tus anuncios vendidos (${bench.n})` : 'valores de arranque hasta que vendas 3 desde Anuncios'}.</div></div>`)}`;
 }
@@ -1352,6 +1403,7 @@ function sheetHTML() {
       <div id="imp-prev">${importPreview(ctx.txt || '')}</div><div class="err" id="sh-err"></div><button class="primary" data-a="save-import">Importar</button>`;
   }
   if (kind === 'anuncio') return anuncioSheet(ctx);
+  if (kind === 'fotos') return fotosSheet(ctx);
   if (kind === 'anuncio-new') return anuncioNewSheet(ctx);
   if (kind === 'moves') return head('MEJORES MOVIMIENTOS') + movesTable(brain().moves);
   if (kind === 'pending') {
@@ -1638,6 +1690,9 @@ function afterSheet() {
   }
   const mp = sheetEl.querySelector('#m-photo');
   if (mp) mp.addEventListener('change', async () => { const f = mp.files && mp.files[0]; if (!f) return; try { st.sheet.ctx.photo = await photoData(f); redrawSheet(); } catch { toast('No se pudo leer la foto'); } });
+  const gt = sheetEl.querySelector('#g-tpl'), gp = sheetEl.querySelector('#g-prod');
+  if (gt) gt.addEventListener('change', async () => { const fs = [...gt.files].slice(0, 6); if (!fs.length) return; const ds = []; for (const f of fs) ds.push(await shrink(f)); try { localStorage.setItem(TPL, JSON.stringify(ds)); } catch { toast('No caben: usa fotos más pequeñas'); } redrawSheet(); });
+  if (gp) gp.addEventListener('change', async () => { const fs = [...gp.files].slice(0, 5); const ds = []; for (const f of fs) ds.push(await shrink(f)); st.sheet.ctx.prods = ds; st.sheet.ctx.extra = sv('g-extra'); redrawSheet(); });
   const it = sheetEl.querySelector('#imp-txt');
   if (it) {
     const up = () => { st.sheet.ctx.txt = it.value; $('#imp-prev', sheetEl).innerHTML = importPreview(it.value); labelTables(sheetEl); };
@@ -1995,6 +2050,10 @@ document.addEventListener('click', async (e) => {
     }
     case 'an-when': { const w = sv('an-when'); if (w) { await db.patch(C.listings, st.sheet.ctx.id, { listedAt: new Date(w).toISOString() }); toast('Hora cambiada'); redrawSheet(); } break; }
     case 'an-down': { await db.patch(C.listings, st.sheet.ctx.id, { status: 'down', endedAt: nowISO() }); closeSheet(); toast('Quitado'); break; }
+    case 'fotos': openSheet('fotos', {}); break;
+    case 'g-savekey': { lsSet(AIK, sv('g-key')); lsSet(AIM2, sv('g-model') || 'gemini-2.5-flash-image'); toast('Clave guardada en este dispositivo'); redrawSheet(); break; }
+    case 'g-run': runFotos(); break;
+    case 'g-photo': { const r = (st.sheet.ctx.res || [])[Number(v)], mid = sv('g-model-sel'); if (r && r.img && mid) { const blob = await (await fetch(r.img)).blob(); await db.patch(C.models, mid, { photo: await photoData(blob) }); toast('Foto guardada en ' + (model(mid) || {}).name); } break; }
     case 'test-win2': { await db.patch(C.models, b.dataset.id, { status: 'ganador', testWin: true }); toast('Ganador · ya cuenta en Stock'); break; }
     case 'stock-more': st.stockMore = !st.stockMore; lsSet('lg_more', st.stockMore ? '1' : '0'); renderSoon(); break;
     case 'photo-rm': st.sheet.ctx.photo = null; redrawSheet(); break;

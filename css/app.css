@@ -639,3 +639,10 @@ img.thumb { box-shadow: 0 1px 3px rgba(0, 0, 0, .2); }
 .tc-v { font-weight: 800; font-size: 14px; } .tc-v.pos { color: #16a34a; } .tc-v.neg { color: var(--neg); } .tc-v.warn { color: var(--warn); } .tc-v.mut { color: var(--muted); }
 .danger.sm { padding: 9px 16px; width: auto; }
 tr.best td { background: var(--accent-soft); }
+
+.gthumbs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; } .gthumbs img { width: 64px; height: 64px; object-fit: cover; border-radius: 10px; }
+.gres { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; } .gres figure { margin: 0; display: grid; gap: 6px; } .gres img { width: 100%; border-radius: 14px; }
+.gres figcaption { display: flex; gap: 6px; flex-wrap: wrap; } .gerr { background: var(--neg-cell); color: var(--neg); border-radius: 12px; padding: 10px; font-size: 12.5px; }
+details summary { cursor: pointer; margin-bottom: 8px; }
+
+.field label.filebtn, label.filebtn { width: fit-content; font-size: 13.5px; font-weight: 700; } .field label.btn-g.filebtn { color: #fff; } .field label.btn-o.filebtn { color: var(--fg); }
