@@ -1045,7 +1045,8 @@ function listingsData() {
 /* ================= AI photos (Google AI Studio / Gemini image) ================= */
 // Your 4 template photos (pillow, wrist front, wrist side, clasp) stay on this device; each one is re-shot with the new watch.
 const AIK = 'ooq_gem_key', AIM2 = 'ooq_gem_model', TPL = 'ooq_gem_tpl';
-const gemKey = () => lsGet(AIK, ''), gemModel = () => lsGet(AIM2, 'gemini-2.5-flash-image');
+const GEM_DEF = 'gemini-3-pro-image'; // Nano Banana Pro
+const gemKey = () => lsGet(AIK, ''), gemModel = () => { const m = lsGet(AIM2, GEM_DEF); return m === 'gemini-2.5-flash-image' ? GEM_DEF : m; };
 const tpls = () => { try { return JSON.parse(lsGet(TPL, '[]')); } catch { return []; } };
 function shrink(file, max = 1024) {
   return new Promise((res, rej) => { const img = new Image(), url = URL.createObjectURL(file); img.onload = () => { const k = Math.min(1, max / Math.max(img.width, img.height)), c = document.createElement('canvas'); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(url); res(c.toDataURL('image/jpeg', 0.88)); }; img.onerror = rej; img.src = url; });
@@ -1059,7 +1060,7 @@ Change only these to match the NEW WATCH: if there is a sleeve, change its color
 Realism: real contact shadows, the watch sits on the skin or pillow, no floating. Real phone photo look, natural grain, not a 3D render, no studio look. Square image.${extra ? '\nExtra: ' + extra : ''}`;
 async function gemImage(tpl, prods, extra) {
   const parts = [{ text: AI_PROMPT(extra) }, { inline_data: { mime_type: 'image/jpeg', data: b64(tpl) } }, ...prods.map((d) => ({ inline_data: { mime_type: 'image/jpeg', data: b64(d) } }))];
-  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(gemModel())}:generateContent`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': gemKey() }, body: JSON.stringify({ contents: [{ role: 'user', parts }], generationConfig: { responseModalities: ['IMAGE', 'TEXT'] } }) });
+  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(gemModel())}:generateContent`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': gemKey() }, body: JSON.stringify({ contents: [{ role: 'user', parts }], generationConfig: { temperature: 1, responseModalities: ['IMAGE', 'TEXT'], imageConfig: { aspectRatio: '1:1', imageSize: '2K' } } }) });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error((j.error && j.error.message) || 'Error ' + r.status);
   const p = ((j.candidates || [])[0] || {}).content?.parts || [], im = p.find((x) => x.inlineData || x.inline_data);
@@ -2051,7 +2052,7 @@ document.addEventListener('click', async (e) => {
     case 'an-when': { const w = sv('an-when'); if (w) { await db.patch(C.listings, st.sheet.ctx.id, { listedAt: new Date(w).toISOString() }); toast('Hora cambiada'); redrawSheet(); } break; }
     case 'an-down': { await db.patch(C.listings, st.sheet.ctx.id, { status: 'down', endedAt: nowISO() }); closeSheet(); toast('Quitado'); break; }
     case 'fotos': openSheet('fotos', {}); break;
-    case 'g-savekey': { lsSet(AIK, sv('g-key')); lsSet(AIM2, sv('g-model') || 'gemini-2.5-flash-image'); toast('Clave guardada en este dispositivo'); redrawSheet(); break; }
+    case 'g-savekey': { lsSet(AIK, sv('g-key')); lsSet(AIM2, sv('g-model') || GEM_DEF); toast('Clave guardada en este dispositivo'); redrawSheet(); break; }
     case 'g-run': runFotos(); break;
     case 'g-photo': { const r = (st.sheet.ctx.res || [])[Number(v)], mid = sv('g-model-sel'); if (r && r.img && mid) { const blob = await (await fetch(r.img)).blob(); await db.patch(C.models, mid, { photo: await photoData(blob) }); toast('Foto guardada en ' + (model(mid) || {}).name); } break; }
     case 'test-win2': { await db.patch(C.models, b.dataset.id, { status: 'ganador', testWin: true }); toast('Ganador · ya cuenta en Stock'); break; }
