@@ -646,3 +646,5 @@ tr.best td { background: var(--accent-soft); }
 details summary { cursor: pointer; margin-bottom: 8px; }
 
 .field label.filebtn, label.filebtn { width: fit-content; font-size: 13.5px; font-weight: 700; } .field label.btn-g.filebtn { color: #fff; } .field label.btn-o.filebtn { color: var(--fg); }
+
+.pastezone { border: 2px dashed var(--grid); border-radius: 14px; padding: 14px; font-size: 13px; color: var(--muted); margin-bottom: 8px; outline: none; min-height: 52px; } .pastezone:focus { border-color: var(--accent); color: var(--fg); } .pastezone img { display: none; }

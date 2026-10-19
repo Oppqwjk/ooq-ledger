@@ -1073,11 +1073,17 @@ function fotosSheet(ctx) {
   return head('FOTOS IA') + `<div class="hint">Subes las fotos del reloj nuevo (1688) → te hace tus ${t.length || 4} fotos de plantilla con ese reloj: mismo fondo y pose, manga y cojín a juego.</div>
     <details${gemKey() ? '' : ' open'}><summary class="eyebrow">Clave de Google AI Studio${gemKey() ? ' · guardada' : ''}</summary><div class="fields2">${fld('g-key', 'API key (solo se guarda en este dispositivo)', gemKey(), 'autocomplete="off" type="password"')}<div class="field"><label for="g-model">Modelo</label><select id="g-model">${[['gemini-3-pro-image', 'Nano Banana Pro (mejor calidad)'], ['gemini-2.5-flash-image', 'Nano Banana (más barato)']].map(([v, l]) => `<option value="${v}"${gemModel() === v ? ' selected' : ''}>${l}</option>`).join('')}</select></div></div><button class="btn-o" data-a="g-savekey">Guardar clave</button></details>
     <div class="field"><span class="lb">Plantillas (${t.length})</span><div class="gthumbs">${t.map((d) => `<img src="${d}" alt="">`).join('') || '<span class="mut sm2">Sube tus 4 fotos plantilla (cojín, muñeca de frente, de lado, cierre). Se quedan guardadas.</span>'}</div><label class="btn-o filebtn">${t.length ? 'Cambiar plantillas' : 'Subir plantillas'}<input type="file" accept="image/*" multiple id="g-tpl" hidden></label></div>
-    <div class="field"><span class="lb">Fotos del reloj nuevo (1688, hasta 5)</span><div class="gthumbs">${prods.map((d) => `<img src="${d}" alt="">`).join('')}</div><label class="btn-g filebtn">${prods.length ? 'Cambiar fotos' : 'Subir fotos de 1688'}<input type="file" accept="image/*" multiple id="g-prod" hidden></label></div>
+    <div class="field"><span class="lb">Fotos del reloj nuevo (1688, hasta 5)</span><div class="gthumbs">${prods.map((d) => `<img src="${d}" alt="">`).join('')}</div><div class="pastezone" id="g-paste" contenteditable="true" aria-label="Pega aquí las fotos">Copia una foto en 1688 → <b>pégala aquí</b> (Ctrl+V / mantener pulsado → Pegar). Hasta 5.</div>
+      <div class="btnrow"><button class="btn-o" data-a="g-pastebtn">Pegar del portapapeles</button>${prods.length ? '<button class="ghost" data-a="g-clear">Quitar fotos</button>' : ''}<label class="ghost filebtn">o subir archivo<input type="file" accept="image/*" multiple id="g-prod" hidden></label></div></div>
     ${fld('g-extra', 'Algo extra (opcional)', ctx.extra || '', 'autocomplete="off" placeholder="Ej. manga de traje negro"')}
     <div class="err" id="sh-err">${esc(ctx.err || '')}</div><button class="primary" data-a="g-run"${ctx.busy ? ' disabled' : ''}>${ctx.busy ? `Generando ${ctx.done || 0}/${t.length}…` : `Generar ${t.length || ''} fotos`}</button>
     ${res.length ? `<div class="gres">${res.map((r, i) => r.err ? `<div class="gerr">Plantilla ${i + 1}: ${esc(r.err)}</div>` : `<figure><img src="${r.img}" alt=""><figcaption><a class="btn-o" download="reloj-${i + 1}.png" href="${r.img}">Descargar</a><button class="ghost" data-a="g-photo" data-v="${i}">Foto del reloj</button></figcaption></figure>`).join('')}</div>
       <div class="field"><label for="g-model-sel">Reloj para "Foto del reloj"</label><select id="g-model-sel">${ms.map((m) => `<option value="${esc(m.id)}">${esc(m.name)}</option>`).join('')}</select></div><div class="hint">Revisa con zoom el texto de la esfera antes de publicar.</div>` : ''}`;
+}
+async function addProds(files) {
+  const c = st.sheet.ctx; c.extra = sv('g-extra'); c.prods = c.prods || [];
+  for (const f of files) { if (c.prods.length >= 5) break; c.prods.push(await shrink(f)); }
+  redrawSheet(); toast(`${c.prods.length} foto${c.prods.length === 1 ? '' : 's'} del reloj`);
 }
 async function runFotos() {
   const c = st.sheet.ctx, t = tpls();
@@ -1693,7 +1699,9 @@ function afterSheet() {
   if (mp) mp.addEventListener('change', async () => { const f = mp.files && mp.files[0]; if (!f) return; try { st.sheet.ctx.photo = await photoData(f); redrawSheet(); } catch { toast('No se pudo leer la foto'); } });
   const gt = sheetEl.querySelector('#g-tpl'), gp = sheetEl.querySelector('#g-prod');
   if (gt) gt.addEventListener('change', async () => { const fs = [...gt.files].slice(0, 6); if (!fs.length) return; const ds = []; for (const f of fs) ds.push(await shrink(f)); try { localStorage.setItem(TPL, JSON.stringify(ds)); } catch { toast('No caben: usa fotos más pequeñas'); } redrawSheet(); });
-  if (gp) gp.addEventListener('change', async () => { const fs = [...gp.files].slice(0, 5); const ds = []; for (const f of fs) ds.push(await shrink(f)); st.sheet.ctx.prods = ds; st.sheet.ctx.extra = sv('g-extra'); redrawSheet(); });
+  const gz = sheetEl.querySelector('#g-paste');
+  if (gz) gz.addEventListener('paste', async (e) => { e.preventDefault(); const fs = [...(e.clipboardData || {}).items || []].filter((it) => it.type.startsWith('image/')).map((it) => it.getAsFile()); if (!fs.length) { toast('No había ninguna imagen copiada'); return; } await addProds(fs); });
+  if (gp) gp.addEventListener('change', async () => { await addProds([...gp.files]); });
   const it = sheetEl.querySelector('#imp-txt');
   if (it) {
     const up = () => { st.sheet.ctx.txt = it.value; $('#imp-prev', sheetEl).innerHTML = importPreview(it.value); labelTables(sheetEl); };
@@ -2054,6 +2062,12 @@ document.addEventListener('click', async (e) => {
     case 'fotos': openSheet('fotos', {}); break;
     case 'g-savekey': { lsSet(AIK, sv('g-key')); lsSet(AIM2 + '2', sv('g-model') || GEM_DEF); toast('Clave guardada en este dispositivo'); redrawSheet(); break; }
     case 'g-run': runFotos(); break;
+    case 'g-clear': st.sheet.ctx.prods = []; redrawSheet(); break;
+    case 'g-pastebtn': {
+      try { const items = await navigator.clipboard.read(), fs = []; for (const it of items) for (const t of it.types) if (t.startsWith('image/')) fs.push(await it.getType(t)); if (!fs.length) { toast('No hay ninguna imagen copiada'); break; } await addProds(fs); }
+      catch { toast('Tu navegador no deja: pega dentro del recuadro (mantener pulsado → Pegar)'); }
+      break;
+    }
     case 'g-photo': { const r = (st.sheet.ctx.res || [])[Number(v)], mid = sv('g-model-sel'); if (r && r.img && mid) { const blob = await (await fetch(r.img)).blob(); await db.patch(C.models, mid, { photo: await photoData(blob) }); toast('Foto guardada en ' + (model(mid) || {}).name); } break; }
     case 'test-win2': { await db.patch(C.models, b.dataset.id, { status: 'ganador', testWin: true }); toast('Ganador · ya cuenta en Stock'); break; }
     case 'stock-more': st.stockMore = !st.stockMore; lsSet('lg_more', st.stockMore ? '1' : '0'); renderSoon(); break;
