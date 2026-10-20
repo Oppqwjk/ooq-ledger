@@ -709,3 +709,23 @@ button.hy-row:hover { background: var(--head); }
 @media (min-width: 900px) { .hy-big { font-size: 48px; } .hy-hero { padding: 26px 28px 22px; } }
 .hy-sub { font-size: 11.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); margin: 10px 0 4px; }
 @media (min-width: 900px) { .hy { max-width: 1120px; margin: 0 auto; } .hy-actions { grid-template-columns: repeat(3, minmax(0, 220px)); } }
+
+/* Objetivos */
+.tag.pos { color: #16a34a; background: rgba(22, 163, 74, .14); }
+.gcards { display: grid; gap: 10px; padding: 4px 14px 14px; }
+.gcard { display: grid; grid-template-columns: auto 1fr auto; align-items: start; gap: 10px; padding: 12px 12px 12px 14px; background: var(--head); border-radius: 14px; }
+.gcard > .chk { margin-top: 2px; }
+.gcard:not(:has(> .chk)) { grid-template-columns: 1fr auto; }
+.gcard.won { opacity: .72; }
+.g-main { all: unset; cursor: pointer; display: grid; gap: 7px; min-width: 0; }
+.g-main:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 8px; }
+.g-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: space-between; }
+.g-top b { font-size: 15px; font-weight: 800; }
+.g-top .tag { margin: 0; }
+.g-val { display: flex; align-items: baseline; gap: 6px; font-variant-numeric: tabular-nums; }
+.g-val b { font-size: 20px; font-weight: 800; letter-spacing: -.02em; }
+.g-val span { color: var(--muted); font-size: 13px; }
+.g-val em { margin-left: auto; font-style: normal; font-weight: 800; font-size: 13px; color: var(--muted); }
+.g-sub { font-size: 12.5px; color: var(--muted); line-height: 1.45; }
+.g-sub .auto { color: var(--faint); }
+.g-x .del { margin-top: -2px; }

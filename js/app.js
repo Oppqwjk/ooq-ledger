@@ -48,13 +48,26 @@ const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
 const STATUS = { ganador: 'Ganador', test: 'Test', espera: 'En espera', descartado: 'Descartado' };
 const SORDER = { ganador: 0, test: 1, espera: 2, descartado: 3 };
 const CATS = { personal: ['Comida', 'Ocio', 'Ropa', 'Transporte', 'Móvil y subs', 'Otros'], negocio: ['Boost Vinted', 'Envíos', 'Fotos y material', 'Otros negocio'] };
+// what a goal can measure; everything except "manual" and "task" is read from your data automatically
 const METRICS = {
+  monthProfit: 'Beneficio de este mes',
+  monthSales: 'Ventas de este mes',
+  monthRevenue: 'Facturación de este mes',
+  weekProfit: 'Beneficio de esta semana',
+  weekSales: 'Ventas de esta semana',
   bestMonth: 'Mejor mes de beneficio',
   streak: 'Meses seguidos por encima de un beneficio',
   cash: 'Caja real',
   totalProfit: 'Beneficio total acumulado',
   units: 'Relojes vendidos en total',
+  winners: 'Relojes ganadores',
+  live: 'Anuncios activos',
+  accounts: 'Cuentas',
+  manual: 'Otro número (lo actualizo yo)',
+  task: 'Tarea (hecho / no hecho)',
 };
+// unit of each metric: € or a count with its word
+const MUNIT = { monthSales: ['venta', 'ventas'], weekSales: ['venta', 'ventas'], units: ['reloj', 'relojes'], winners: ['ganador', 'ganadores'], live: ['anuncio', 'anuncios'], accounts: ['cuenta', 'cuentas'], streak: ['mes', 'meses'] };
 const DEF = { cash: 0, cashAt: '1970-01-01T00:00:00.000Z', cushion: 0, monthlyGoal: 1000, defaultCost: 10, perSale: 0, accounts: ['tictac spain', 'y2kwatches'] };
 
 /* ---------------- data access ---------------- */
@@ -183,8 +196,27 @@ function metricValue(g) {
     case 'streak': { const th = n0(g.threshold); let best = 0, run = 0; monthRange().forEach((m) => { if (parts(m).net >= th) { run++; best = Math.max(best, run); } else run = 0; }); return best; }
     case 'cash': case 'savings': return cashNow();
     case 'totalProfit': return sum(L('sales').map(profitOf)) - sum(L('spend').filter((x) => x.kind === 'negocio').map((x) => n0(x.amount)));
-    case 'units': return L('sales').length;
+    case 'units': return L('sales').filter((x) => !x.cancelled).length;
+    case 'monthProfit': return parts(curMonth()).net;
+    case 'monthSales': return parts(curMonth()).nSales;
+    case 'monthRevenue': return parts(curMonth()).revenue;
+    case 'weekProfit': return sum(weekDays().map((k) => parts(k).net));
+    case 'weekSales': return sum(weekDays().map((k) => parts(k).nSales));
+    case 'winners': return brain().stocks.filter((s) => s.m.status === 'ganador').length;
+    case 'live': return L('listings').filter((l) => l.status === 'live').length;
+    case 'accounts': return acctNames().length;
+    case 'manual': return n0(g.current);
+    case 'task': return g.done ? 1 : 0;
   }
+  return 0;
+}
+// Monday to today
+function weekDays() { const t = todayKey(), back = (new Date().getDay() + 6) % 7; return Array.from({ length: back + 1 }, (_, i) => shiftDay(t, -back + i)); }
+// what you added in the last 30 days, per day (for "at your pace you get there on…")
+function pace30(metric) {
+  const t = todayKey(), from = shiftDay(t, -29), ss = L('sales').filter((x) => !x.cancelled && x.date >= from && x.date <= t);
+  if (metric === 'units') return ss.length / 30;
+  if (metric === 'totalProfit') return (sum(ss.map(profitOf)) - sum(L('spend').filter((x) => x.kind === 'negocio' && x.date >= from && x.date <= t).map((x) => n0(x.amount)))) / 30;
   return 0;
 }
 
@@ -206,8 +238,9 @@ const acctNames = () => S0().accounts || [];
 const liveOf = (mid) => L('listings').filter((l) => l.modelId === mid && l.status === 'live');
 
 /* ---------------- state ---------------- */
-const TABS = [['inicio', 'Hoy'], ['calendario', 'Ventas'], ['stock', 'Stock'], ['gastos', 'Dinero'], ['tests', 'Tests'], ['anuncios', 'Anuncios'], ['metas', 'Plan'], ['cuentas', 'Cuentas']];
-const BAR = ['inicio', 'calendario', 'stock', 'gastos']; // Tests from Stock; Anuncios, Plan and Cuentas live in Ajustes
+const TABS = [['inicio', 'Hoy'], ['calendario', 'Ventas'], ['stock', 'Stock'], ['gastos', 'Dinero'], ['tests', 'Tests'], ['anuncios', 'Anuncios'], ['metas', 'Objetivos'], ['cuentas', 'Cuentas']];
+const BAR = ['inicio', 'calendario', 'stock', 'gastos']; // Tests from Stock; Objetivos from Hoy; Anuncios and Cuentas live in Ajustes
+const TOPBAR = [...BAR.slice(0, 2), 'metas', ...BAR.slice(2)]; // desktop: Objetivos as its own tab
 const ICONS = {
   inicio: '<path d="M4 11 12 4.5l8 6.5v8.5a1.5 1.5 0 0 1-1.5 1.5H15v-6h-6v6H5.5A1.5 1.5 0 0 1 4 19.5z"/>',
   manager: '<path d="M5 5.5h14a1.5 1.5 0 0 1 1.5 1.5v9a1.5 1.5 0 0 1-1.5 1.5h-7.5L7 21v-3.5H5A1.5 1.5 0 0 1 3.5 16V7A1.5 1.5 0 0 1 5 5.5z"/><path d="M8.5 11.5h.01M12 11.5h.01M15.5 11.5h.01"/>',
@@ -216,7 +249,7 @@ const ICONS = {
   tests: '<path d="M9.5 3.5h5M10.5 3.5v5.5L5.2 18a1.7 1.7 0 0 0 1.5 2.5h10.6a1.7 1.7 0 0 0 1.5-2.5L13.5 9V3.5"/><path d="M7.5 14.5h9"/>',
   cuentas: '<circle cx="9" cy="8.5" r="3.5"/><path d="M2.5 20c.6-3.6 3.2-5.5 6.5-5.5s5.9 1.9 6.5 5.5"/><path d="M16 5.2a3.5 3.5 0 0 1 0 6.6M18.5 14.8c1.7.8 2.7 2.6 3 5.2"/>',
   gastos: '<rect x="3" y="6" width="18" height="13.5" rx="3"/><path d="M3 10h18M16 15h2"/>',
-  metas: '<path d="M5 21V4M5 4h11l-2 4 2 4H5"/>',
+  metas: '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1"/>',
   anuncios: '<path d="M3.5 12.2V4.8a1.3 1.3 0 0 1 1.3-1.3h7.4l8.3 8.3a1.5 1.5 0 0 1 0 2.1l-6.3 6.3a1.5 1.5 0 0 1-2.1 0z"/><circle cx="8.3" cy="8.3" r="1.6"/>',
 };
 const st = {
@@ -230,7 +263,7 @@ const st = {
 function shell() {
   app.innerHTML = `<header class="ribbon"><div class="wrap rib-in">
       <div class="brand"><img src="icons/icon-192.png" alt=""><b>OOQ</b></div>
-      <nav class="toptabs" aria-label="Secciones">${TABS.filter(([k]) => BAR.includes(k)).map(([k, l]) => `<button data-a="tab" data-v="${k}">${l}</button>`).join('')}</nav>
+      <nav class="toptabs" aria-label="Secciones">${TOPBAR.map((k) => `<button data-a="tab" data-v="${k}">${(TABS.find((t) => t[0] === k) || [k, k])[1]}</button>`).join('')}</nav>
       <div class="top-r"><button class="syncpill" data-a="settings" id="syncpill"><i></i><span>Local</span></button><button class="iconbtn addtop" data-a="add" aria-label="Añadir"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
       <button class="iconbtn" data-a="settings" aria-label="Ajustes"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button></div>
     </div></header>
@@ -270,7 +303,7 @@ function render() {
   const main = $('#main'); if (!main) return;
   document.querySelectorAll('[data-a="tab"]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === st.tab)));
   const v = { inicio: viewToday, calendario: viewPnl, stock: viewStock2, anuncios: viewListings, tests: viewTests2, cuentas: viewAccounts, gastos: viewSpend, metas: viewGoals }[st.tab] || viewToday;
-  document.querySelectorAll('.tabbar [data-a="tab"], .toptabs [data-a="tab"]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === st.tab || (b.dataset.v === 'stock' && st.tab === 'tests'))));
+  document.querySelectorAll('.tabbar [data-a="tab"], .toptabs [data-a="tab"]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === st.tab || (b.dataset.v === 'stock' && st.tab === 'tests') || (b.dataset.v === 'inicio' && st.tab === 'metas' && !!b.closest('.tabbar')))));
   brainCache = null;
   const chat = st.tab === 'manager' && !!agent.key() && !st.aiSetup;
   document.body.classList.toggle('chatmode', st.tab === 'manager');
@@ -397,7 +430,7 @@ function monthTable(mk) {
 function paceBlock() {
   const p = brain().pace, mn = MONTHS[pm(p.mk).m - 1];
   const netRow = tr('Beneficio neto', money(p.net, true) + `<span class="sub">ventas ${eur(p.P)}${p.biz ? ` − gastos negocio ${eur(p.biz)}` : ''}${p.PT ? ` · objetivo ${eur(p.PT)}` : ''}</span>`);
-  if (!p.T) return panel('Este mes', `<table class="xl"><tbody>${tr('Ventas', p.S)}${netRow}</tbody></table><div class="foot"><button class="lnk" data-a="tab" data-v="metas">Pon el objetivo del mes en Plan</button></div>`);
+  if (!p.T) return panel('Este mes', `<table class="xl"><tbody>${tr('Ventas', p.S)}${netRow}</tbody></table><div class="foot"><button class="lnk" data-a="planedit">Pon el objetivo del mes</button></div>`);
   const pct = p.S / p.T, done = p.S >= p.T;
   return panel('Objetivo ' + mn, `<table class="xl"><tbody>
     <tr class="big"><th>Ventas</th><td class="n">${p.S}<span class="sub" style="display:inline"> de ${p.T}</span></td></tr>
@@ -407,7 +440,7 @@ function paceBlock() {
     ${done ? tr('Objetivo', '<span class="pos">cumplido</span>') : tr(`Necesitas (${p.left} días)`, `<b class="${p.paceDay >= p.need ? 'pos' : 'neg'}">${rate1(p.need)}/día</b>`)}
     ${tr('A este ritmo acabas en', `<span class="${p.ok ? 'pos' : p.minOk ? 'warn' : 'neg'}">${p.proj} ventas</span>` + (p.limit === 'stock' ? `<span class="sub warn">límite: stock (${p.inHand} en casa + ${p.landing} que llegan este mes)${p.projDemand > p.proj ? `, tu ritmo daría ${p.projDemand}` : ''}</span>` : ''), 'tot')}
     ${netRow}
-  </tbody></table>`, '<button class="lnk" data-a="tab" data-v="metas">Plan</button>');
+  </tbody></table>`, '<button class="lnk" data-a="tab" data-v="metas">Objetivos</button>');
 }
 const TAGC = { Datos: 'neg', Deuda: 'neg', Caja: 'neg', Stock: 'acc', Venta: 'acc', Test: 'warn', Cuentas: 'blu', Anuncio: 'blu', Ritmo: 'mut' };
 function moveAttrs(act) { return `data-a="${act.a}"${act.id ? ` data-id="${esc(act.id)}"` : ''}${act.v ? ` data-v="${esc(act.v)}"` : ''}`; }
@@ -776,6 +809,11 @@ function dataAlerts() {
   if (noW.length) items.push(`<button class="alert" data-a="model" data-id="${esc(noW[0].id)}"><b>Falta el peso de ${noW.length} reloj${noW.length === 1 ? '' : 'es'}</b><span>${esc(noW.map((m) => m.name).join(', '))}</span></button>`);
   return items.length ? `<div class="alerts">${items.join('')}</div>` : '';
 }
+// Hoy: the goals still open, closest to done first
+function todayGoals() {
+  const gs = L('goals').map((g) => ({ g, i: goalInfo(g) })).filter((x) => !x.i.won).sort((a, b) => b.i.p - a.i.p).slice(0, 3);
+  return panel('Objetivos', gs.length ? goalsTable(gs.map((x) => x.g)) : empty('Sin objetivos abiertos.'), '<button class="lnk" data-a="tab" data-v="metas">Ver todos</button>');
+}
 /* ================= Hoy: the one screen to open every day ================= */
 function viewToday() {
   const mk = curMonth(), a = monthStats(mk), g = goalFor(mk), t = todayKey();
@@ -811,7 +849,7 @@ function viewToday() {
   return `<div class="hy">${hero}${money}
     <div class="hy-actions"><button class="btn-g" data-a="add" data-mode="venta">+ Venta</button><button class="btn-o" data-a="add" data-mode="pedido">+ Pedido</button><button class="btn-o" data-a="add" data-mode="gasto">+ Gasto</button></div>
     <div class="g2"><div class="col">${panel('Hoy toca', todo)}${panel('En camino', `<div class="hy-list">${way}</div>`)}</div>
-    <div class="col">${panel('Últimos movimientos', `<div class="hy-list">${log}</div>`, '<button class="lnk" data-a="tab" data-v="gastos">Ver todo</button>')}
+    <div class="col">${todayGoals()}${panel('Últimos movimientos', `<div class="hy-list">${log}</div>`, '<button class="lnk" data-a="tab" data-v="gastos">Ver todo</button>')}
     <button class="hy-claude" data-a="export-ai"><b>Copiar para Claude</b><span>Pega el export en tu proyecto y te digo el mejor movimiento</span></button></div></div></div>`;
 }
 function viewPnlSimple() {
@@ -1331,38 +1369,84 @@ function viewSpend() {
     <div class="cols"><div class="col">${panel('Gastos de ' + MONTHS[pm(mk).m - 1], totals)}${panel('Movimientos', moves)}</div><div class="col">${panel('Pagos fijos', bills, '<button class="lnk" data-a="bill">+ Pago</button>')}</div></div>`;
 }
 
+const isMoneyM = (g) => (g.metric === 'manual' ? g.unit !== 'n' : !MUNIT[g.metric] && g.metric !== 'task');
 function fmtMetric(g, v) {
-  if (g.metric === 'streak') return v + (v === 1 ? ' mes' : ' meses');
-  if (g.metric === 'units') return v + ' uds';
-  return eur(v);
+  if (g.metric === 'task') return v >= 1 ? 'hecho' : 'pendiente';
+  if (isMoneyM(g)) return eur(v).replace(/,00(?=\s)/, '');
+  const u = MUNIT[g.metric], r = Math.round(v * 10) / 10;
+  return u ? `${String(r).replace('.', ',')} ${r === 1 ? u[0] : u[1]}` : String(r).replace('.', ',');
 }
-function goalNote(g, now, tg, won) {
-  const money2 = g.metric !== 'streak' && g.metric !== 'units';
-  let note = '';
-  if (g.metric === 'streak') note = `meses con ${eur(n0(g.threshold))} o más, seguidos`;
-  if (g.deadline && !won) {
-    const { y, m } = pm(g.deadline), c = pm(curMonth()), left = (y - c.y) * 12 + (m - c.m) + 1;
-    if (left > 0 && money2) note += (note ? ' · ' : '') + `${eur((tg - now) / left)}/mes hasta ${MSHORT[m - 1]} ${y}`;
-    else if (left <= 0) note += (note ? ' · ' : '') + 'fecha límite pasada';
+const endOfMonth = (mk) => mk + '-' + pad(daysIn(mk));
+// everything a goal card shows: value, %, what's left, what you need per day and whether your pace gets there
+function goalInfo(g) {
+  const now = metricValue(g), tg = g.metric === 'task' ? 1 : n0(g.target) || 1, won = now >= tg, p = Math.min(1, Math.max(0, now / tg));
+  const t = todayKey(), lines = [];
+  let state = won ? 'won' : '', due = null;
+  if (/^month/.test(g.metric)) due = endOfMonth(curMonth());
+  else if (/^week/.test(g.metric)) due = shiftDay(t, 6 - ((new Date().getDay() + 6) % 7));
+  else if (/^\d{4}-\d{2}$/.test(g.deadline || '')) due = endOfMonth(g.deadline);
+  else if (/^\d{4}-\d{2}-\d{2}$/.test(g.deadline || '')) due = g.deadline;
+  const left = due ? daysBetween(t, due) + 1 : null, rest = tg - now, money2 = isMoneyM(g);
+  const per = (v) => (money2 ? eur(v) : fmtMetric(g, Math.ceil(v * 10) / 10));
+  if (g.metric === 'streak') lines.push(`meses seguidos con ${eur(n0(g.threshold)).replace(/,00(?=\s)/, '')} o más de beneficio`);
+  if (won) lines.push(g.metric === 'task' && g.doneAt ? 'hecho el ' + shortDate(dayKey(new Date(g.doneAt))) : 'conseguido');
+  else if (g.metric === 'task') { if (left !== null) { lines.push(left > 0 ? `quedan ${left} días` : 'fecha pasada'); state = left <= 0 ? 'late' : left <= 7 ? 'warn' : ''; } }
+  else {
+    if (left !== null && left > 0) {
+      const each = ['winners', 'live', 'accounts', 'streak'].includes(g.metric) ? '' : ` -> ${per(rest / left)}/día`;
+      lines.push(`faltan ${fmtMetric(g, rest)} en ${left} día${left === 1 ? '' : 's'}${each}`);
+    } else if (left !== null) { lines.push(`faltan ${fmtMetric(g, rest)} · fecha pasada`); state = 'late'; }
+    else lines.push(`faltan ${fmtMetric(g, rest)}`);
+    // pace: this month / this week projected to its end; totals at the last 30 days' pace
+    if (/^(month|week)/.test(g.metric) && left > 0) {
+      const span = /^month/.test(g.metric) ? daysIn(curMonth()) : 7, gone = span - left + 1, proj = now / Math.max(1, gone) * span;
+      if (gone >= 3 || /^week/.test(g.metric) && gone >= 2) { const ok = proj >= tg; lines.push(`a este ritmo acabas en ${fmtMetric(g, proj)}`); state = ok ? 'ok' : 'warn'; }
+    } else if (g.metric === 'units' || g.metric === 'totalProfit') {
+      const r = pace30(g.metric);
+      if (r > 0) { const d = Math.ceil(rest / r), on = shiftDay(t, d); lines.push(`a tu ritmo de 30 días: el ${shortDate(on)}${on.slice(0, 4) !== t.slice(0, 4) ? ' ' + on.slice(0, 4) : ''}`); if (due) state = on <= due ? 'ok' : 'warn'; }
+    } else if (g.metric === 'bestMonth') {
+      const p2 = parts(curMonth()).net, gone = new Date().getDate(), proj = p2 / gone * daysIn(curMonth());
+      if (gone >= 3) { lines.push(`este mes vas camino de ${eur(proj).replace(/,\d\d(?=\s)/, '')}`); state = proj >= tg ? 'ok' : 'warn'; }
+    }
   }
-  return won ? 'conseguido' + (note ? ' · ' + note : '') : note;
+  return { now, tg, won, p, lines, state };
 }
-function goalsTable(gs, compact) {
-  return `<table class="xl list goals"><thead><tr><th>Meta</th><th class="n">Actual</th><th class="n">Progreso</th>${compact ? '' : '<th></th>'}</tr></thead><tbody>${gs.map((g) => {
-    const now = metricValue(g), tg = n0(g.target) || 1, won = now >= tg, p = Math.min(1, Math.max(0, now / tg)), note = goalNote(g, now, tg, won);
-    return `<tr><td>${esc(g.title)}${note ? `<span class="sub ${won ? 'pos' : ''}">${note}</span>` : ''}</td><td class="n">${fmtMetric(g, now)}<span class="sub">de ${fmtMetric(g, tg)}</span></td><td class="n barcell">${pbar(p, won ? 'won' : '')}<span>${Math.round(p * 100)}%</span></td>${compact ? '' : `<td class="x">${xbtn('goals', g.id)}</td>`}</tr>`;
-  }).join('')}</tbody></table>`;
+function goalCard(g) {
+  const i = goalInfo(g), task = g.metric === 'task';
+  const chk = task ? `<button class="chk" data-a="goal-done" data-id="${esc(g.id)}" aria-pressed="${i.won}" aria-label="Marcar hecho">${i.won ? '✓' : ''}</button>` : '';
+  const tag = i.won ? '<span class="tag pos">Conseguido</span>' : i.state === 'ok' ? '<span class="tag pos">Vas bien</span>' : i.state === 'warn' ? '<span class="tag warn">No llegas</span>' : i.state === 'late' ? '<span class="tag neg">Fuera de plazo</span>' : '';
+  return `<div class="gcard ${i.won ? 'won' : ''}">${chk}<button class="g-main" data-a="goal-edit" data-id="${esc(g.id)}">
+    <div class="g-top"><b>${esc(g.title)}</b>${tag}</div>
+    ${task ? '' : `<div class="g-val"><b>${fmtMetric(g, i.now)}</b><span>de ${fmtMetric(g, i.tg)}</span><em>${Math.round(i.p * 100)}%</em></div>${pbar(i.p, i.won ? 'won' : '')}`}
+    <div class="g-sub">${i.lines.map(esc).join(' · ')}${g.metric === 'manual' || task ? '' : ` · <span class="auto">${esc(METRICS[g.metric] || '')}, automático</span>`}</div></button><span class="g-x">${xbtn('goals', g.id)}</span></div>`;
 }
-function viewGoals() {
-  const gs = L('goals').slice().sort((a, b) => n0(a.order) - n0(b.order));
+function goalsTable(gs) { return `<div class="gcards">${gs.map(goalCard).join('')}</div>`; }
+function sortedGoals() {
+  return L('goals').slice().sort((a, b) => goalInfo(a).won - goalInfo(b).won || n0(a.order) - n0(b.order));
+}
+function planTable() {
   const plan = S0().plan || {}, months = Object.keys(plan).sort(), cm = curMonth();
-  const pt = months.length ? `<div class="tscroll"><table class="xl list stock"><thead><tr><th>Mes</th><th class="n">Ventas</th><th class="n">Mín.</th><th class="n">Hechas</th><th class="n">Benef. obj.</th><th class="n">Benef.</th></tr></thead><tbody>${months.map((mk) => {
+  return months.length ? `<div class="tscroll"><table class="xl list stock"><thead><tr><th>Mes</th><th class="n">Ventas</th><th class="n">Mín.</th><th class="n">Hechas</th><th class="n">Benef. obj.</th><th class="n">Benef.</th></tr></thead><tbody>${months.map((mk) => {
     const p = plan[mk], pr = parts(mk), past = mk < cm, cur = mk === cm;
     const sc = pr.nSales >= n0(p.sales) ? 'pos' : pr.nSales >= n0(p.min) ? 'warn' : past ? 'neg' : '';
     return `<tr class="${cur ? 'tot2' : ''}"><td>${MSHORT[pm(mk).m - 1]} ${String(pm(mk).y).slice(2)}${cur ? '<span class="sub">este mes</span>' : ''}</td><td class="n">${n0(p.sales)}</td><td class="n">${n0(p.min)}</td><td class="n ${past || cur ? sc : ''}">${past || cur ? pr.nSales : '·'}</td><td class="n">${eur(n0(p.profit)).replace(/,00/, '')}</td><td class="n">${past || cur ? money(pr.net, true) : '·'}</td></tr>`;
   }).join('')}</tbody></table></div><div class="foot">Si no llegas al mínimo de un mes, no se abre cuenta nueva el siguiente: primero se arregla lo que falla.</div>` : empty('Sin plan mensual.');
-  return `<div class="toolbar"><span class="ttl">Plan</span><span style="display:flex;gap:6px"><button class="btn-o" data-a="planedit">Editar plan</button><button class="btn-g" data-a="goal">+ Meta</button></span></div>
-    <div class="cols"><div class="col">${milestonesCard()}${paceBlock()}${panel('Plan mensual', pt)}</div><div class="col">${panel('Metas', gs.length ? goalsTable(gs, false) : empty('Aún no hay metas.'))}</div></div>`;
+}
+function viewGoals() {
+  const cm = curMonth(), a = monthStats(cm), g = goalFor(cm), pz = brain().pace, pc = planOf(cm);
+  const day = new Date().getDate(), left = daysIn(cm) - day + 1, rest = g - a.net;
+  const projNet = day >= 3 ? a.net / day * daysIn(cm) : null;
+  const tile = (lbl, big, sub, c2 = '') => `<div class="kpi ${c2}"><span class="k-l">${lbl}</span><b class="k-v">${big}</b><span class="k-s">${sub}</span></div>`;
+  const T = pc && n0(pc.sales) ? n0(pc.sales) : 0, needS = T ? Math.max(0, T - a.n) / left : 0;
+  const k = `<div class="kpis k3">
+    ${tile('Objetivo de ' + MONTHS[pm(cm).m - 1], `<span class="${a.net < 0 ? 'neg' : ''}">${eur(a.net)}</span><small> / ${eur(g).replace(/,00/, '')}</small>`, `${pbar(a.net / g, a.net >= g ? 'won' : '')}<span>${a.net >= g ? 'cumplido' : `faltan ${eur(rest)} -> ${eur(rest / left)}/día (${left} días)`}</span>`, 'hero')}
+    ${tile('Ventas', String(a.n) + (T ? `<small> / ${T}</small>` : ''), T ? (a.n >= T ? '<span class="pos">cumplido</span>' : `necesitas ${rate1(needS)}/día · vas a ${rate1(pz.paceDay)}/día`) : `vas a ${rate1(pz.paceDay)}/día`)}
+    ${tile('A este ritmo', projNet === null ? '—' : `<span class="${projNet >= g ? 'pos' : 'neg'}">${eur(projNet).replace(/,\d\d(?=\s)/, '')}</span>`, projNet === null ? 'se calcula a partir del día 3' : projNet >= g ? 'llegas al objetivo del mes' : `te quedarías a ${eur(g - projNet).replace(/,\d\d(?=\s)/, '')}`)}
+  </div>`;
+  const gs = sortedGoals();
+  const mine = panel('Mis objetivos', gs.length ? goalsTable(gs) : empty('Aún no hay objetivos. Crea uno y se mide solo con tus datos.'), '<button class="lnk" data-a="goal">+ Objetivo</button>');
+  return `<div class="toolbar"><span class="ttl">Objetivos</span><div class="tb-r"><button class="btn-g" data-a="goal">+ Objetivo</button><button class="btn-o" data-a="planedit">Objetivo del mes</button><button class="ghost" data-a="stock-more">${st.stockMore ? 'Ver menos' : 'Ver más'}</button></div></div>
+    ${k}<div class="cols"><div class="col">${mine}</div><div class="col">${milestonesCard()}${st.stockMore ? paceBlock() + panel('Plan mensual', planTable(), '<button class="lnk" data-a="planedit">Editar</button>') : ''}</div></div>`;
 }
 
 /* ---------------- sheets ---------------- */
@@ -1441,7 +1525,7 @@ function sheetHTML() {
       <button class="ghost" data-a="theme" style="justify-self:start">${document.documentElement.dataset.theme === 'dark' ? 'Usar tema claro' : 'Usar tema oscuro'}</button>
       <div class="card" style="padding:14px;display:grid;gap:8px"><div class="eyebrow">Sincronización</div>
         <div style="font-size:14px">${ss.enabled ? (ss.user ? `Conectado como <b>${esc(ss.user)}</b>` : 'Sin sesión') : 'Solo en este dispositivo (sin conectar)'}${ss.enabled && ss.at ? `<div class="hint">Última sincronización ${new Date(ss.at).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}${ss.pending ? ` · ${ss.pending} cambios por subir` : ''}</div>` : ''}${ss.error ? `<div class="hint neg">${esc(ss.error)}</div>` : ''}</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">${ss.enabled ? '<button class="ghost" data-a="sync-now">Sincronizar ahora</button>' : ''}<button class="ghost" data-a="export-ai">Copiar para Claude</button><button class="ghost" data-a="tab" data-v="metas">Plan y metas</button><button class="ghost" data-a="tab" data-v="cuentas">Cuentas</button><button class="ghost" data-a="tab" data-v="tests">Tests</button><button class="ghost" data-a="tab" data-v="anuncios">Anuncios</button><button class="ghost" data-a="import">Importar ventas (CSV)</button><button class="ghost" data-a="export">Descargar copia</button>${ss.enabled && ss.user ? '<button class="ghost" data-a="logout">Cerrar sesión</button>' : ''}</div></div>`;
+        <div style="display:flex;gap:8px;flex-wrap:wrap">${ss.enabled ? '<button class="ghost" data-a="sync-now">Sincronizar ahora</button>' : ''}<button class="ghost" data-a="export-ai">Copiar para Claude</button><button class="ghost" data-a="tab" data-v="metas">Objetivos</button><button class="ghost" data-a="tab" data-v="cuentas">Cuentas</button><button class="ghost" data-a="tab" data-v="tests">Tests</button><button class="ghost" data-a="tab" data-v="anuncios">Anuncios</button><button class="ghost" data-a="import">Importar ventas (CSV)</button><button class="ghost" data-a="export">Descargar copia</button>${ss.enabled && ss.user ? '<button class="ghost" data-a="logout">Cerrar sesión</button>' : ''}</div></div>`;
   }
   if (kind === 'import') {
     const accs = acctNames(), main = brain().acc.mainName || accs[0], other = accs.find((a) => a !== main) || main;
@@ -1544,11 +1628,16 @@ function sheetHTML() {
     return head('PAGO FIJO') + fld('b-concept', 'Concepto', '', 'autocomplete="off" placeholder="Ej. Carnet 1/4"') + `<div class="fields2">${fld('b-amt', 'Importe (€)', '')}<div class="field"><label for="b-month">Mes</label><input id="b-month" type="month" value="${curMonth()}"></div></div><div class="err" id="sh-err"></div><button class="primary" data-a="save-bill">Guardar</button>`;
   }
   if (kind === 'goal') {
-    return head('NUEVA META') + fld('g-title', 'Nombre de la meta', '', 'autocomplete="off" placeholder="Ej. Primer mes de 1.500 €"') +
-      `<div class="field"><label for="g-metric">Qué mide</label><select id="g-metric">${Object.keys(METRICS).map((k) => `<option value="${k}">${METRICS[k]}</option>`).join('')}</select></div>
-      <div class="fields2">${fld('g-target', 'Objetivo', '', 'inputmode="decimal" placeholder="1000"')}<div class="field" id="g-th-wrap" hidden><label for="g-th">Beneficio mínimo al mes (€)</label><input id="g-th" inputmode="decimal" placeholder="1500"></div></div>
-      <div class="field"><label for="g-dead">Fecha límite (opcional)</label><input id="g-dead" type="month"></div>
-      <div class="hint" id="g-hint">Objetivo en euros.</div><div class="err" id="sh-err"></div><button class="primary" data-a="save-goal">Guardar</button>`;
+    const g = ctx.id ? db.get(C.goals, ctx.id) || {} : {}, me = g.metric || 'monthProfit';
+    const dl = g.deadline ? (g.deadline.length === 7 ? endOfMonth(g.deadline) : g.deadline) : '';
+    return head(g.id ? 'EDITAR OBJETIVO' : 'NUEVO OBJETIVO') + fld('g-title', 'Objetivo', g.title || '', 'autocomplete="off" placeholder="Ej. 1.000 € de beneficio en noviembre"') +
+      `<div class="field"><label for="g-metric">Qué mide</label><select id="g-metric">${Object.keys(METRICS).map((k) => `<option value="${k}"${k === me ? ' selected' : ''}>${METRICS[k]}</option>`).join('')}</select></div>
+      <div class="fields2"><div class="field" id="g-tg-wrap"><label for="g-target" id="g-tg-l">Meta</label><input id="g-target" inputmode="decimal" value="${esc(g.target == null ? '' : g.target)}" placeholder="1000"></div>
+      <div class="field" id="g-th-wrap" hidden><label for="g-th">Beneficio mínimo al mes (€)</label><input id="g-th" inputmode="decimal" value="${esc(g.threshold == null ? '' : g.threshold)}" placeholder="1500"></div>
+      <div class="field" id="g-cur-wrap" hidden><label for="g-cur">Llevas</label><input id="g-cur" inputmode="decimal" value="${esc(g.current == null ? '' : g.current)}" placeholder="0"></div></div>
+      <div class="field" id="g-unit-wrap" hidden><label for="g-unit">Se mide en</label><select id="g-unit"><option value="eur"${g.unit !== 'n' ? ' selected' : ''}>Euros</option><option value="n"${g.unit === 'n' ? ' selected' : ''}>Número</option></select></div>
+      <div class="field" id="g-dead-wrap"><label for="g-dead">Fecha límite (opcional)</label><input id="g-dead" type="date" value="${esc(dl)}"></div>
+      <div class="hint" id="g-hint"></div><div class="err" id="sh-err"></div><button class="primary" data-a="save-goal">Guardar</button>`;
   }
   return '';
 }
@@ -1753,7 +1842,8 @@ function afterSheet() {
   }
   const gm = sheetEl.querySelector('#g-metric');
   if (gm) {
-    const up = () => { const v = gm.value; $('#g-th-wrap', sheetEl).hidden = v !== 'streak'; $('#g-hint', sheetEl).textContent = v === 'streak' ? 'Objetivo en meses seguidos (ej. 2).' : v === 'units' ? 'Objetivo en relojes vendidos.' : 'Objetivo en euros.'; };
+    const HINT = { monthProfit: 'Se mide solo con el beneficio neto de este mes. Vuelve a 0 cada mes.', monthSales: 'Ventas de este mes. Vuelve a 0 cada mes.', monthRevenue: 'Lo vendido este mes en euros. Vuelve a 0 cada mes.', weekProfit: 'Beneficio neto de lunes a hoy.', weekSales: 'Ventas de lunes a hoy.', bestMonth: 'Tu mejor mes de beneficio neto.', streak: 'Meta en meses seguidos (ej. 2).', cash: 'Banco + Vinted + pendiente de Vinted.', totalProfit: 'Todo el beneficio neto desde el principio.', units: 'Relojes vendidos desde el principio.', winners: 'Relojes con estado ganador.', live: 'Anuncios activos ahora.', accounts: 'Cuentas en Ajustes.', manual: 'Lo que lleves lo pones tú al editarlo.', task: 'Se marca como hecho tocando el círculo.' };
+    const up = () => { const v = gm.value, month = /^(month|week)/.test(v); $('#g-th-wrap', sheetEl).hidden = v !== 'streak'; $('#g-cur-wrap', sheetEl).hidden = v !== 'manual'; $('#g-unit-wrap', sheetEl).hidden = v !== 'manual'; $('#g-tg-wrap', sheetEl).hidden = v === 'task'; $('#g-dead-wrap', sheetEl).hidden = month; $('#g-tg-l', sheetEl).textContent = v === 'streak' ? 'Meta (meses seguidos)' : MUNIT[v] ? 'Meta (' + MUNIT[v][1] + ')' : v === 'manual' ? 'Meta' : 'Meta (€)'; $('#g-hint', sheetEl).textContent = HINT[v] || ''; };
     gm.addEventListener('change', up); up();
   }
 }
@@ -1878,12 +1968,22 @@ async function saveBill() {
   closeSheet(); toast('Pago añadido');
 }
 async function saveGoal() {
-  const t = sv('g-title'), me = sv('g-metric'), tg = num(sv('g-target')), th = num(sv('g-th')), dl = sv('g-dead');
-  if (!t) return shErr('Ponle un nombre.'); if (isNaN(tg) || tg <= 0) return shErr('Pon el objetivo.');
+  const id = st.sheet.ctx.id, old = id ? db.get(C.goals, id) || {} : {};
+  const t = sv('g-title'), me = sv('g-metric'), tg = num(sv('g-target')), th = num(sv('g-th')), cu = num(sv('g-cur')), dl = sv('g-dead');
+  if (!t) return shErr('Pon el objetivo.');
+  if (me !== 'task' && (isNaN(tg) || tg <= 0)) return shErr('Pon la meta.');
   if (me === 'streak' && (isNaN(th) || th <= 0)) return shErr('Pon el beneficio mínimo de cada mes.');
-  const d = { title: t, metric: me, target: r2(tg), order: L('goals').length + 1 };
-  if (me === 'streak') d.threshold = r2(th); if (/^\d{4}-\d{2}$/.test(dl)) d.deadline = dl;
-  await db.put(C.goals, d); closeSheet(); toast('Meta creada');
+  const d = { ...old, title: t, metric: me, target: me === 'task' ? 1 : r2(tg), order: old.order || L('goals').length + 1 };
+  delete d.threshold; delete d.deadline; delete d.current; delete d.unit;
+  if (me === 'streak') d.threshold = r2(th);
+  if (me === 'manual') { d.current = isNaN(cu) ? 0 : r2(cu); d.unit = sv('g-unit') === 'n' ? 'n' : 'eur'; }
+  if (!/^(month|week)/.test(me) && /^\d{4}-\d{2}-\d{2}$/.test(dl)) d.deadline = dl;
+  if (me !== 'task') { delete d.done; delete d.doneAt; }
+  await db.put(C.goals, d); closeSheet(); toast(id ? 'Objetivo guardado' : 'Objetivo creado');
+}
+async function toggleGoal(id) {
+  const g = db.get(C.goals, id); if (!g) return;
+  await db.put(C.goals, { ...g, done: !g.done, doneAt: g.done ? undefined : nowISO() });
 }
 async function togglePaid(id) {
   const b = db.get(C.bills, id); if (!b) return;
@@ -2184,6 +2284,8 @@ document.addEventListener('click', async (e) => {
     case 'dist-down': { for (const l of await listingsOf(b.dataset.id, v)) await db.patch(C.listings, l.id, { status: 'down', endedAt: nowISO() }); toast('Quitado de ' + v); break; }
     case 'bill': openSheet('bill'); break;
     case 'goal': openSheet('goal'); break;
+    case 'goal-edit': openSheet('goal', { id: b.dataset.id }); break;
+    case 'goal-done': toggleGoal(b.dataset.id); break;
     case 'sync-now': sync.syncNow(); toast('Sincronizando…'); break;
     case 'export': exportBackup(); break;
     case 'logout': await sync.logout(); location.reload(); break;
