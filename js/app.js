@@ -206,8 +206,8 @@ const acctNames = () => S0().accounts || [];
 const liveOf = (mid) => L('listings').filter((l) => l.modelId === mid && l.status === 'live');
 
 /* ---------------- state ---------------- */
-const TABS = [['calendario', 'P&L'], ['stock', 'Stock'], ['anuncios', 'Anuncios'], ['tests', 'Tests'], ['gastos', 'Gastos'], ['metas', 'Plan'], ['cuentas', 'Cuentas']];
-const BAR = ['calendario', 'stock', 'anuncios', 'tests', 'gastos']; // Plan and Cuentas live in Ajustes
+const TABS = [['inicio', 'Hoy'], ['calendario', 'Ventas'], ['stock', 'Stock'], ['gastos', 'Dinero'], ['tests', 'Tests'], ['anuncios', 'Anuncios'], ['metas', 'Plan'], ['cuentas', 'Cuentas']];
+const BAR = ['inicio', 'calendario', 'stock', 'gastos']; // Tests from Stock; Anuncios, Plan and Cuentas live in Ajustes
 const ICONS = {
   inicio: '<path d="M4 11 12 4.5l8 6.5v8.5a1.5 1.5 0 0 1-1.5 1.5H15v-6h-6v6H5.5A1.5 1.5 0 0 1 4 19.5z"/>',
   manager: '<path d="M5 5.5h14a1.5 1.5 0 0 1 1.5 1.5v9a1.5 1.5 0 0 1-1.5 1.5h-7.5L7 21v-3.5H5A1.5 1.5 0 0 1 3.5 16V7A1.5 1.5 0 0 1 5 5.5z"/><path d="M8.5 11.5h.01M12 11.5h.01M15.5 11.5h.01"/>',
@@ -220,7 +220,7 @@ const ICONS = {
   anuncios: '<path d="M3.5 12.2V4.8a1.3 1.3 0 0 1 1.3-1.3h7.4l8.3 8.3a1.5 1.5 0 0 1 0 2.1l-6.3 6.3a1.5 1.5 0 0 1-2.1 0z"/><circle cx="8.3" cy="8.3" r="1.6"/>',
 };
 const st = {
-  tab: (location.hash.slice(1) && TABS.some((t) => t[0] === location.hash.slice(1))) ? location.hash.slice(1) : TABS.some((t) => t[0] === lsGet('lg_tab', '')) ? lsGet('lg_tab', '') : 'calendario',
+  tab: (location.hash.slice(1) && TABS.some((t) => t[0] === location.hash.slice(1))) ? location.hash.slice(1) : 'inicio',
   month: curMonth(), selDay: todayKey(), calMode: lsGet('lg_cal', 'profit'), stockSeg: lsGet('lg_seg', 'relojes'), filter: lsGet('lg_filter', 'activos'),
   confirm: null, sheet: null, stockMore: lsGet('lg_more', '0') === '1',
   chatBusy: false, chatErr: '', chatImgs: [], chatLive: [], aiSetup: false, briefNew: false, aiMovesBusy: false, aiMovesErr: '',
@@ -243,7 +243,11 @@ function shell() {
       <div class="comp-row"><label class="comp-cam" aria-label="Adjuntar captura"><input type="file" accept="image/*" id="comp-file" multiple hidden><svg viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg></label>
       <textarea id="comp-text" rows="1" placeholder="Escribe al Manager…"></textarea>
       <button class="comp-send" data-a="chat-send" aria-label="Enviar"><svg viewBox="0 0 24 24"><path d="M4 12h14M13 6l6 6-6 6"/></svg></button></div></div></div>
-    <nav class="tabbar" aria-label="Secciones">${TABS.filter(([k]) => BAR.includes(k)).map(([k, l]) => `<button data-a="tab" data-v="${k}"><svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[k] || ''}</svg><span>${l}</span></button>`).join('')}</nav>`;
+    <nav class="tabbar" aria-label="Secciones">${BAR.slice(0, 2).map(tabBtn).join('')}<button class="tb-add" data-a="add" aria-label="Apuntar"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>${BAR.slice(2).map(tabBtn).join('')}</nav>`;
+}
+function tabBtn(k) {
+  const l = (TABS.find((t) => t[0] === k) || [k, k])[1];
+  return `<button data-a="tab" data-v="${k}"><svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[k] || ''}</svg><span>${l}</span></button>`;
 }
 function updatePill() {
   const p = $('#syncpill'); if (!p) return;
@@ -265,7 +269,8 @@ function renderSoon() { if (rq) return; rq = true; requestAnimationFrame(() => {
 function render() {
   const main = $('#main'); if (!main) return;
   document.querySelectorAll('[data-a="tab"]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === st.tab)));
-  const v = { calendario: viewPnl, stock: viewStock2, anuncios: viewListings, tests: viewTests2, cuentas: viewAccounts, gastos: viewSpend, metas: viewGoals }[st.tab] || viewPnl;
+  const v = { inicio: viewToday, calendario: viewPnl, stock: viewStock2, anuncios: viewListings, tests: viewTests2, cuentas: viewAccounts, gastos: viewSpend, metas: viewGoals }[st.tab] || viewToday;
+  document.querySelectorAll('.tabbar [data-a="tab"], .toptabs [data-a="tab"]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === st.tab || (b.dataset.v === 'stock' && st.tab === 'tests'))));
   brainCache = null;
   const chat = st.tab === 'manager' && !!agent.key() && !st.aiSetup;
   document.body.classList.toggle('chatmode', st.tab === 'manager');
@@ -771,10 +776,48 @@ function dataAlerts() {
   if (noW.length) items.push(`<button class="alert" data-a="model" data-id="${esc(noW[0].id)}"><b>Falta el peso de ${noW.length} reloj${noW.length === 1 ? '' : 'es'}</b><span>${esc(noW.map((m) => m.name).join(', '))}</span></button>`);
   return items.length ? `<div class="alerts">${items.join('')}</div>` : '';
 }
+/* ================= Hoy: the one screen to open every day ================= */
+function viewToday() {
+  const mk = curMonth(), a = monthStats(mk), g = goalFor(mk), t = todayKey();
+  const dim = daysIn(mk), day = Number(t.slice(8)), left = Math.max(1, dim - day + 1);
+  const all = L('sales').filter((x) => !x.cancelled && !x.costMissing), per = a.n ? a.net / a.n : all.length ? sum(all.map(profitOf)) / all.length : 16;
+  const need = Math.max(0, g - a.net), salesNeed = per > 0 ? Math.ceil(need / per) : 0, pct = g ? Math.max(0, Math.min(1, a.net / g)) : 0;
+  const pace = day ? (a.net / day) * dim : 0;
+  const msg = a.net >= g ? 'Objetivo del mes cumplido. A por el siguiente.' : pace >= g ? 'Vas por delante del objetivo. Sigue así.' : `Te faltan <b>${eur(need)}</b> → ~<b>${salesNeed} ventas</b> · ${(salesNeed / left).toFixed(1).replace('.', ',')} al día`;
+  const hero = `<section class="hy-hero"><div class="hy-top"><span class="hy-eye">${monthName(mk)} · beneficio</span><span class="hy-days">${left} días</span></div>
+    <div class="hy-big">${eur(a.net)}<small> / ${eur(g)}</small></div>
+    <div class="hy-bar"><i style="width:${Math.round(pct * 100)}%"></i></div>
+    <p class="hy-msg">${msg}</p>
+    <div class="hy-mini"><div><b>${a.n}</b><span>ventas</span></div><div><b>${eur(per)}</b><span>por venta</span></div><div><b>${eur(pace)}</b><span>a este ritmo</span></div></div></section>`;
+  const vin = vintedBalance() + pendingVinted(), sp = spendable(), bank = bankNow();
+  const money = `<div class="hy-money"><button class="hy-m" data-a="settings"><span>Banco</span><b class="${bank < 0 ? 'neg' : ''}">${eur(bank)}</b></button><div class="hy-m"><span>En Vinted</span><b>${eur(vin)}</b></div><div class="hy-m ${sp < 50 ? 'low' : ''}"><span>Puedes gastar</span><b class="${sp < 0 ? 'neg' : ''}">${eur(sp)}</b></div></div>`;
+  // what needs you today: bad data, bills due, stock running out
+  const fix = salesToFix().length, nm = B.addD(t, 31).slice(0, 7);
+  const bills = L('bills').filter((b) => !b.paid && b.month <= nm).sort((x, y) => x.month.localeCompare(y.month));
+  const pl = plan(), warn = warnLines(pl);
+  const todo = `${fix ? `<button class="alert" data-a="orphans"><b>${fix} venta${fix === 1 ? '' : 's'} sin reloj o sin coste</b><span>toca para arreglarlas</span></button>` : ''}
+    ${bills.length ? `<div class="hy-bills"><div class="hy-sub">Pagos que vienen · ${eur(sum(bills.map((b) => n0(b.amount))))}</div>${bills.map((b) => `<div class="kv"><span>${esc(b.concept)} <span class="mut">· ${b.month === mk ? 'este mes' : monthName(b.month).split(' ')[0].toLowerCase()}</span></span><b>${eur(n0(b.amount))}</b></div>`).join('')}</div>` : ''}
+    <div class="todos">${warn}</div>`;
+  const lead = brain().lead, open = L('orders').filter((o) => !o.draft && o.status !== 'recibido').sort((x, y) => (x.date || '').localeCompare(y.date || ''));
+  const way = open.length ? open.map((o) => { const u = sum((o.lines || []).map((l) => n0(l.qty))), eta = B.etaOf(o, lead); return `<button class="hy-row" data-a="order" data-id="${esc(o.id)}"><span class="hy-ic way"></span><span class="hy-t"><b>${u} uds · ${esc((o.lines || []).map((l) => { const m = model(l.modelId); return m ? m.name : l.name || 'Reloj'; }).filter((v, i, s) => s.indexOf(v) === i).slice(0, 3).join(', '))}</b><span class="mut">llega ~${dShort(eta)} · ${inDays(eta)}</span></span><b class="hy-a">${eur(orderCost(o))}</b></button>`; }).join('') : empty('Nada en camino.');
+  // every euro in and out, newest first
+  const ev = [
+    ...L('sales').filter((x) => !x.cancelled).map((x) => ({ at: x.at || x.date, k: 'in', t: x.modelName || (model(x.modelId) || {}).name || 'Venta', s: 'venta' + (x.account ? ' · ' + x.account : ''), v: n0(x.price) })),
+    ...L('spend').map((x) => ({ at: x.at || x.date, k: 'out', t: x.note || x.cat || 'Gasto', s: x.cat || (x.kind === 'negocio' ? 'negocio' : 'personal'), v: -n0(x.amount) })),
+    ...L('orders').filter((o) => !o.draft).map((o) => ({ at: o.at || o.date, k: 'ord', t: 'Pedido · ' + sum((o.lines || []).map((l) => n0(l.qty))) + ' uds', s: (o.note || LANE[o.lane || 'otro'] || ''), v: -orderCost(o) })),
+    ...L('income').map((x) => ({ at: x.at || x.date, k: 'in', t: x.note || 'Ingreso', s: 'ingreso', v: n0(x.amount) })),
+  ].sort((x, y) => String(y.at).localeCompare(String(x.at))).slice(0, 8);
+  const log = ev.length ? ev.map((e) => `<div class="hy-row"><span class="hy-ic ${e.k}"></span><span class="hy-t"><b>${esc(e.t)}</b><span class="mut">${shortDate(String(e.at).slice(0, 10))} · ${esc(e.s)}</span></span><b class="hy-a ${e.v < 0 ? 'neg' : 'pos'}">${eur(e.v, true)}</b></div>`).join('') : empty('Aún no hay movimientos.');
+  return `<div class="hy">${hero}${money}
+    <div class="hy-actions"><button class="btn-g" data-a="add" data-mode="venta">+ Venta</button><button class="btn-o" data-a="add" data-mode="pedido">+ Pedido</button><button class="btn-o" data-a="add" data-mode="gasto">+ Gasto</button></div>
+    <div class="g2"><div class="col">${panel('Hoy toca', todo)}${panel('En camino', `<div class="hy-list">${way}</div>`)}</div>
+    <div class="col">${panel('Últimos movimientos', `<div class="hy-list">${log}</div>`, '<button class="lnk" data-a="tab" data-v="gastos">Ver todo</button>')}
+    <button class="hy-claude" data-a="export-ai"><b>Copiar para Claude</b><span>Pega el export en tu proyecto y te digo el mejor movimiento</span></button></div></div></div>`;
+}
 function viewPnlSimple() {
   const mk = st.month, a = monthStats(mk), g = goalFor(mk), fix = salesToFix().length;
   const tile = (lbl, big, sub, c2 = '') => `<div class="kpi ${c2}"><span class="k-l">${lbl}</span><b class="k-v">${big}</b><span class="k-s">${sub}</span></div>`;
-  return `<div class="toolbar">${mnav()}<div class="tb-r"><button class="btn-g" data-a="add" data-mode="venta" data-date="${st.selDay}">+ Venta</button><button class="btn-o" data-a="add" data-mode="gasto" data-date="${st.selDay}">+ Gasto</button><button class="btn-o" data-a="export-ai">Copiar para Claude</button><button class="ghost" data-a="stock-more">Ver más</button></div></div>
+  return `<div class="toolbar">${mnav()}<div class="tb-r"><button class="btn-g" data-a="add" data-mode="venta" data-date="${st.selDay}">+ Venta</button><button class="ghost" data-a="stock-more">Ver más</button></div></div>
     ${fix ? `<div class="alerts"><button class="alert" data-a="orphans"><b>${fix} venta${fix === 1 ? '' : 's'} sin reloj o sin coste</b><span>toca para arreglarlas</span></button></div>` : ''}
     <div class="kpis k3">${tile('Beneficio', `<span class="${a.net < 0 ? 'neg' : ''}">${eur(a.net)}</span>`, `${pbar(a.net / g, a.net >= g ? 'won' : '')}<span>${Math.max(0, Math.round(a.net / g * 100))}% de ${eur(g)}</span>`, 'hero')}${tile('Ventas', String(a.n), `vendido ${eur(a.rev)}`)}${tile('Ticket medio', eur(a.ticket), 'por venta')}</div>
     <div class="g2 pnl"><div class="col"><div class="o1">${panel('Beneficio por día', calGrid2(mk))}</div></div><div class="col"><div class="o2">${dayPanel2()}</div><div class="o3">${panel('Stock', `<div class="todos">${warnLines(plan())}</div><div class="foot"><button class="lnk" data-a="tab" data-v="stock">Ver stock</button></div>`)}</div></div></div>`;
@@ -878,7 +921,7 @@ function viewStockSimple() {
       <div class="sr-k"><b>${r.transit || '–'}</b><span>${arr ? 'llegan ' + dShort(arr.eta) : 'en camino'}</span></div>
       <div class="sr-k"><b>${left ? dShort(left) : '–'}</b><span>${left ? 'te dura hasta' : r.home ? 'sin ritmo' : 'agotado'}</span></div></button>`;
   }).join('');
-  return `<div class="toolbar"><div class="ttl">Stock</div><div class="tb-r"><button class="btn-o" data-a="catchup">Contar stock</button><button class="btn-o" data-a="add" data-mode="pedido">+ Pedido</button><button class="ghost" data-a="stock-more">Ver más</button></div></div>
+  return `<div class="toolbar"><div class="ttl">Stock</div><div class="tb-r"><button class="btn-g" data-a="add" data-mode="pedido">+ Pedido</button><button class="btn-o" data-a="tab" data-v="tests">Tests</button><button class="btn-o" data-a="catchup">Contar stock</button><button class="ghost" data-a="stock-more">Ver más</button></div></div>
     <div class="g2s"><div class="s-todo">${panel('Avisos de stock', `<div class="todos">${warnLines(pl)}</div><div class="foot">Avisa cuando te quedan menos de ${pl.lead + 7} días (un pedido tarda ${pl.lead}). Cuenta lo que viene en camino.</div>`)}</div><div class="s-ord">${ordersPanel()}</div><div class="s-list">
     ${panel('Más rápidos primero', `<div class="slist">${list || empty('Nada en stock.')}</div><div class="foot">"A la semana" cuenta solo los días que lo tenías en casa.</div>`, '<button class="lnk" data-a="model">+ Reloj</button>')}</div></div>`;
 }
@@ -1398,7 +1441,7 @@ function sheetHTML() {
       <button class="ghost" data-a="theme" style="justify-self:start">${document.documentElement.dataset.theme === 'dark' ? 'Usar tema claro' : 'Usar tema oscuro'}</button>
       <div class="card" style="padding:14px;display:grid;gap:8px"><div class="eyebrow">Sincronización</div>
         <div style="font-size:14px">${ss.enabled ? (ss.user ? `Conectado como <b>${esc(ss.user)}</b>` : 'Sin sesión') : 'Solo en este dispositivo (sin conectar)'}${ss.enabled && ss.at ? `<div class="hint">Última sincronización ${new Date(ss.at).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}${ss.pending ? ` · ${ss.pending} cambios por subir` : ''}</div>` : ''}${ss.error ? `<div class="hint neg">${esc(ss.error)}</div>` : ''}</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">${ss.enabled ? '<button class="ghost" data-a="sync-now">Sincronizar ahora</button>' : ''}<button class="ghost" data-a="export-ai">Copiar para Claude</button><button class="ghost" data-a="tab" data-v="metas">Plan y metas</button><button class="ghost" data-a="tab" data-v="cuentas">Cuentas</button><button class="ghost" data-a="import">Importar ventas (CSV)</button><button class="ghost" data-a="export">Descargar copia</button>${ss.enabled && ss.user ? '<button class="ghost" data-a="logout">Cerrar sesión</button>' : ''}</div></div>`;
+        <div style="display:flex;gap:8px;flex-wrap:wrap">${ss.enabled ? '<button class="ghost" data-a="sync-now">Sincronizar ahora</button>' : ''}<button class="ghost" data-a="export-ai">Copiar para Claude</button><button class="ghost" data-a="tab" data-v="metas">Plan y metas</button><button class="ghost" data-a="tab" data-v="cuentas">Cuentas</button><button class="ghost" data-a="tab" data-v="tests">Tests</button><button class="ghost" data-a="tab" data-v="anuncios">Anuncios</button><button class="ghost" data-a="import">Importar ventas (CSV)</button><button class="ghost" data-a="export">Descargar copia</button>${ss.enabled && ss.user ? '<button class="ghost" data-a="logout">Cerrar sesión</button>' : ''}</div></div>`;
   }
   if (kind === 'import') {
     const accs = acctNames(), main = brain().acc.mainName || accs[0], other = accs.find((a) => a !== main) || main;
@@ -2025,7 +2068,7 @@ document.addEventListener('click', async (e) => {
     case 'model': openSheet('model', { id: b.dataset.id }); break;
     case 'receive': openSheet('receive', { id: b.dataset.id }); break;
     case 'order': openSheet('order', { id: b.dataset.id }); break;
-    case 'theme': { const t = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = t; lsSet('lg_theme', t); redrawSheet(); break; }
+    case 'theme': { const t = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = t; lsSet('lg_theme2', t); redrawSheet(); break; }
     case 'del-order': {
       const id = st.sheet.ctx.id, key = 'orders/' + id;
       if (st.confirm === key) { st.confirm = null; closeSheet(); await del('orders', id); }
@@ -2485,7 +2528,7 @@ function loginView(done) {
 
 /* ---------------- boot ---------------- */
 async function boot() {
-  document.documentElement.dataset.theme = lsGet('lg_theme', 'light');
+  document.documentElement.dataset.theme = lsGet('lg_theme2', 'dark');
   await db.init();
   if (sync.configured()) {
     await sync.currentSession().catch(() => null);
