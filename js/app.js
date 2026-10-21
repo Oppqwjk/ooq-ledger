@@ -47,7 +47,8 @@ const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
 
 const STATUS = { ganador: 'Ganador', test: 'Test', espera: 'En espera', descartado: 'Descartado' };
 const SORDER = { ganador: 0, test: 1, espera: 2, descartado: 3 };
-const CATS = { personal: ['Comida', 'Ocio', 'Ropa', 'Transporte', 'Móvil y subs', 'Otros'], negocio: ['Boost Vinted', 'Envíos', 'Fotos y material', 'Otros negocio'] };
+const APP_V = 'v32';
+const CATS = { personal: ['Comida', 'Ocio', 'Ropa', 'Transporte', 'Móvil y subs', 'Ahorro / retiro personal', 'Otros'], negocio: ['Boost Vinted', 'Envíos', 'Fotos y material', 'Otros negocio'] };
 // what a goal can measure; everything except "manual" and "task" is read from your data automatically
 const METRICS = {
   monthProfit: 'Beneficio de este mes',
@@ -68,7 +69,7 @@ const METRICS = {
 };
 // unit of each metric: € or a count with its word
 const MUNIT = { monthSales: ['venta', 'ventas'], weekSales: ['venta', 'ventas'], units: ['reloj', 'relojes'], winners: ['ganador', 'ganadores'], live: ['anuncio', 'anuncios'], accounts: ['cuenta', 'cuentas'], streak: ['mes', 'meses'] };
-const DEF = { cash: 0, cashAt: '1970-01-01T00:00:00.000Z', cushion: 0, monthlyGoal: 1000, defaultCost: 10, perSale: 0, accounts: ['tictac spain', 'y2kwatches'] };
+const DEF = { cash: 0, cashAt: '1970-01-01T00:00:00.000Z', cushion: 50, monthlyGoal: 1000, defaultCost: 10, perSale: 0, accounts: ['tictac spain', 'y2kwatches'] };
 
 /* ---------------- data access ---------------- */
 const L = (k) => db.all(C[k]);
@@ -83,7 +84,14 @@ const isEst = (m) => !m || isNaN(num(m.landed)) || m.landedSrc === 'estimado';
 // where a unit cost comes from: an order (real, or estimated while DHL/IVA isn't known), typed by you, or the default
 const costSrc = (m) => (!m || isNaN(num(m.landed)) ? 'por defecto' : m.landedSrc === 'real' ? 'real (pedido)' : m.landedSrc === 'estimado' ? 'estimado (pedido)' : 'puesto a mano');
 // pouches: a supply that goes with some sales, not a product
-const pouchCost = () => { const s = S0(); return n0(s.pouchCost !== undefined ? s.pouchCost : s.perSale); };
+// a pouch costs what it cost in the last order that brought pouches (price + its share of shipping); settings only until then
+const pouchCost = () => {
+  const o = L('orders').filter((x) => !x.draft && x.pouches && n0(x.pouches.qty) > 0).sort((a, b) => (b.date + (b.at || '')).localeCompare(a.date + (a.at || '')))[0];
+  const al = o && typeof landedFromOrder === 'function' ? landedFromOrder(o) : null;
+  if (al && al.pouch > 0) return al.pouch;
+  if (o) return r2(n0(o.pouches.unit));
+  const s = S0(); return n0(s.pouchCost !== undefined ? s.pouchCost : s.perSale);
+};
 const pouches = () => n0(S0().pouches);
 async function patchSettings(p) { await db.put(C.settings, { ...(db.get(C.settings, 'settings') || DEF), ...p, id: 'settings' }); }
 const profitOf = (s) => (s.costMissing ? 0 : typeof s.profit === 'number' ? s.profit : n0(s.price) - n0(s.cost)); // no real cost → left out of profit until you fill it in
@@ -227,7 +235,7 @@ function brain() {
   return brainCache;
 }
 const stockOf = (id) => brain().stocks.find((s) => s.m.id === id) || null;
-const agent = createAgent({ db, C, L, model, S0, brain, fresh: () => { brainCache = null; }, costOf, todayKey, nowISO, patchSettings, pouches, pouchCost, cashNow, bankNow, vintedBalance, pendingVinted, owedTotal, spendable, pendingBills, costSrc, landedFromOrder, plan: () => plan(), listingsData: () => listingsData(), billsDue: () => L('bills').filter((b) => b.month <= curMonth() && !b.paid).map((b) => `${b.month} ${b.concept} ${n0(b.amount)} €`) });
+const agent = createAgent({ db, C, L, model, S0, brain, fresh: () => { brainCache = null; }, costOf, todayKey, nowISO, patchSettings, pouches, pouchCost, cashNow, bankNow, vintedBalance, pendingVinted, owedTotal, spendable, pendingBills, costSrc, landedFromOrder, plan: () => plan(), listingsData: () => listingsData(), watchExtra: (id) => watchExtra(id), accExtra: (a) => accExtra(a), testHit: () => testHit(), reservedFor: (o) => reservedFor(o), etaOf: (o) => B.etaOf(o, brain().lead), billsDue: () => L('bills').filter((b) => b.month <= curMonth() && !b.paid).map((b) => `${b.month} ${b.concept} ${n0(b.amount)} €`) });
 const SST = { 'en camino': ['En camino', 'mut'], 'no repone': ['No se repone', 'mut'], enfria: ['Se enfría', 'warn'], rotura: ['Sin stock', 'neg'], urgente: ['Urgente', 'neg'], pedir: ['Pedir', 'warn'], ok: ['OK', 'pos'], exceso: ['Exceso', 'warn'], parado: ['Parado', 'warn'], liquidar: ['Liquidar', 'warn'], lento: ['Lento', 'mut'], 'sin datos': ['Sin ventas', 'mut'], fuera: ['Fuera', 'mut'] };
 const days1 = (v) => (v === Infinity || isNaN(v) ? '∞' : v >= 100 ? '99+' : String(Math.floor(v)));
 const rate1 = (v) => (v ? v.toFixed(v < 1 ? 2 : 1).replace('.', ',') : '0');
@@ -529,6 +537,8 @@ function orderBody(o, pb) {
     ${tr('Estado', o.status === 'recibido' ? `<span class="pos">Recibido ${shortDate(o.receivedDate)}</span>` : '<span class="warn">En camino</span>')}
     ${(o.lines || []).map((l) => { const m = model(l.modelId); return tr(esc(m ? m.name : l.name || 'Reloj'), `${n0(l.qty)} × ${eur(n0(l.unit))}`); }).join('')}
     ${o.pouches ? tr('Bolsitas', `${n0(o.pouches.qty)} × ${eur(n0(o.pouches.unit))}`) : ''}
+    ${tr('Proveedor', SUPPLIER[o.supplier || '1688'] + (o.shippedDate ? ' · enviado ' + shortDate(o.shippedDate) : ''))}
+    ${n0(o.vat) ? tr('IVA y cargos al pagar', eur(n0(o.vat))) : ''}
     ${tr('Vía', LANE[o.lane || 'otro'] + (o.status !== 'recibido' ? ` · llega ~${shortDate(B.etaOf(o, brain().lead))}` : ''))}
     ${tr('Pagado al pedir', eur(n0(o.paid)))}
     ${payments(o).map((p) => tr('Pagado ' + shortDate(p.date), eur(n0(p.amount)))).join('')}
@@ -592,7 +602,8 @@ function dayRows(k) {
   return h;
 }
 
-const LANE = { dhl: 'DUA', dua: 'DUA', ddp: 'DDP', otro: 'DDP' };
+const LANE = { dhl: 'DUA', dua: 'DUA', ddp: 'DDP', otro: 'DDP', ali: 'AliExpress' };
+const SUPPLIER = { '1688': '1688', ali: 'AliExpress', otro: 'Otro' };
 const isDua = (o) => o && (o.lane === 'dua' || o.lane === 'dhl'); // DUA: taxes paid when it lands (old DHL orders too)
 function stockBadge(r) {
   if (!r) return '';
@@ -651,7 +662,7 @@ function viewPlan(seg, bz) {
     <div class="foot" style="display:flex;gap:8px;flex-wrap:wrap">${pl.dhl.units ? '<button class="btn-g" data-a="plan-order" data-v="dhl">Crear pedido DHL</button>' : ''}${pl.ddp.units ? '<button class="btn-g" data-a="plan-order" data-v="ddp">Crear pedido DDP</button>' : ''}<span>Te quedan ${eur(pl.left)} después.</span></div>`
     : pl.skipped.length ? empty(`Hay que pedir, pero ahora no hay caja (puedes gastar ${eur(pl.cash)}). Abajo lo que falta: paga deudas y vende primero.`) : empty('Nada que pedir: todos los relojes que se venden tienen stock para más que lo que tarda un DDP.');
   const skip = pl.skipped.length ? panel('Sin caja para', `<table class="xl list"><tbody>${pl.skipped.map((k) => `<tr><td>${esc(k.s.m.name)}<span class="sub">${LANE[k.lane]} ${k.want} uds · ${eur(k.want * costOf(k.s.m))} · ${esc(k.s.why)}</span></td></tr>`).join('')}</tbody></table><div class="foot">Vende o paga deudas primero. En cuanto haya caja aparece arriba.</div>`) : '';
-  const how = `<div class="foot">Ritmo = ventas de 28 días, las recientes pesan más. Colchón de seguridad según cuánto varían tus ventas. Pide para cubrir lo que tarda el DDP + ${n0(S0().cycleDays) || B.FALLBACK.cycleDays} días. Si se acaba antes de que llegue un DDP, el hueco va por DHL. Coste por unidad = coste puesto del reloj.</div>`;
+  const how = `<div class="foot">Ritmo = ventas de 28 días, las recientes pesan más. Colchón de seguridad según cuánto varían tus ventas. Pide para cubrir lo que tarda el DDP + ${n0(S0().cycleDays) || B.FALLBACK.cycleDays} días. Coste por unidad = coste puesto del reloj.</div>`;
   return `<div class="toolbar">${seg}</div><div class="cols wide"><div class="col">${panel('Pedido recomendado', body)}${skip}</div><div class="col">${panel('Tu caja y plazos', head2 + how)}</div></div>`;
 }
 
@@ -669,6 +680,7 @@ function cashInput() {
   const from = shiftDay(t, -29), sp = sum(L('spend').filter((x) => x.date >= from && x.date <= t && !x.imported).map((x) => n0(x.amount)));
   return { now: bankNow() + vintedBalance(), pending, bills, debts, spendPerDay: sp / 30, releaseDays: pd };
 }
+try { if (localStorage.getItem('ooq_debug') === '1') window.__ooq = { plan: () => plan(), brain: () => brain(), cash: () => cashInput() }; } catch {}
 function plan() {
   const bz = brain();
   if (!bz._plan) bz._plan = P.planStock({ today: todayKey(), stocks: bz.stocks, lead: bz.lead, settings: S0(), cash: cashInput(), priceOf });
@@ -802,11 +814,60 @@ function topWatches(mk) {
   const rows = Object.values(by).sort((a, b) => b.pr - a.pr), mx = Math.max(1, ...rows.map((r) => r.pr));
   return panel('Por reloj este mes', rows.length ? `<div class="tw">${rows.map((r) => `<div class="tw-r click" ${r.m ? `data-a="model" data-id="${esc(r.m.id)}"` : ''}>${thumb(r.m, 36)}<div class="tw-m"><b>${esc(r.name)}</b><div class="pbar"><i style="width:${Math.max(3, r.pr / mx * 100)}%"></i></div></div><div class="tw-n"><b>${eur(r.pr)}</b><span>${r.n} v · ${eur(r.rev)}</span></div></div>`).join('')}</div>` : empty('Aún no hay ventas este mes.'));
 }
+/* ================= what can go wrong with a buyer or a number ================= */
+// units sold that you don't have at home yet: each one waits for a box, with Vinted's ship deadline
+function reservedSales() {
+  const lead = brain().lead, t = todayKey();
+  return L('sales').filter((v) => v.reserved && !v.cancelled && !v.shipped).map((v) => {
+    const m = model(v.modelId), st2 = stockOf(v.modelId), arr = st2 && st2.arrivals[0], eta = v.filled || (arr ? arr.eta : null);
+    const by = v.shipBy || shiftDay(v.date, 7), late = !v.filled && (!eta || eta > by);
+    return { v, m, eta, by, late, filled: !!v.filled, left: B.diffD(t, by) };
+  }).sort((a, b) => a.by.localeCompare(b.by));
+}
+// live listings of a watch you don't have at home
+function listingsNoStock() {
+  const t = todayKey(), byOf = shiftDay(t, 7);
+  return L('listings').filter((l) => l.status === 'live').map((l) => {
+    const m = model(l.modelId), r = stockOf(l.modelId); if (!m || !r) return null;
+    const free = r.home - (r.reserved || 0); if (free > 0) return null;
+    const arr = r.arrivals[0];
+    return { l, m, arr, kind: arr ? 'camino' : 'sin', ok: arr ? arr.eta <= byOf : false };
+  }).filter(Boolean);
+}
+// a cost you typed that disagrees with what the orders say (its own box, or a sibling with the same 1688 price and weight)
+function costWarnings() {
+  const out = [];
+  for (const m of L('models').filter((z) => z.status !== 'descartado' && !isNaN(num(z.landed)))) {
+    const lo = latestOrderOf(m.id), al = lo ? landedFromOrder(lo) : null, oc = al && al.per[m.id] ? al.per[m.id].landed : null;
+    if (oc !== null && m.landedSrc !== 'real' && m.landedSrc !== 'estimado' && Math.abs(oc - num(m.landed)) >= 0.01) { out.push({ m, typed: num(m.landed), should: oc, why: `su pedido del ${shortDate(lo.date)} da ${eur(oc)}` }); continue; }
+    if (oc === null && n0(m.unitPrice) > 0 && n0(m.weight) > 0) {
+      const sib = L('models').find((z) => z.id !== m.id && P.familyOf(z) === P.familyOf(m) && n0(z.unitPrice) === n0(m.unitPrice) && n0(z.weight) === n0(m.weight) && (z.landedSrc === 'real' || z.landedSrc === 'estimado') && !isNaN(num(z.landed)));
+      if (sib && Math.abs(num(sib.landed) - num(m.landed)) >= 0.01) out.push({ m, typed: num(m.landed), should: num(sib.landed), sib, why: `${sib.name} tiene el mismo precio 1688 (${eur(n0(m.unitPrice))}) y peso (${n0(m.weight)} g) y cuesta ${eur(num(sib.landed))}` });
+    }
+  }
+  return out;
+}
+function riskAlerts() {
+  const items = [];
+  for (const r of reservedSales()) {
+    const nm = esc(r.m ? r.m.name : r.v.modelName);
+    if (r.filled) items.push(`<div class="alert"><b>Envía ya: ${nm}</b><span>vendido el ${shortDate(r.v.date)} a ${esc(r.v.account || '')} · ya está en casa · plazo ${shortDate(r.by)}</span><span class="btnrow"><button class="btn-o" data-a="sale-shipped" data-id="${esc(r.v.id)}">Enviado</button></span></div>`);
+    else items.push(`<div class="alert ${r.late ? 'bad' : ''}"><b>${r.late ? 'No llega a tiempo' : 'Reservado'}: ${nm}</b><span>vendido el ${shortDate(r.v.date)} sin stock · ${r.eta ? 'llega ~' + shortDate(r.eta) : 'no hay nada pedido'} · plazo de envío ${shortDate(r.by)}${r.late ? ' → pide prórroga al comprador' : ''}</span><span class="btnrow"><button class="btn-o" data-a="sale-extend" data-id="${esc(r.v.id)}">Prórroga +7 días</button></span></div>`);
+  }
+  const ns = listingsNoStock();
+  const sin = ns.filter((x) => x.kind === 'sin'), cam = ns.filter((x) => x.kind === 'camino');
+  if (sin.length) items.push(`<button class="alert bad" data-a="listing" data-id="${esc(sin[0].l.id)}"><b>${sin.length} anuncio${sin.length === 1 ? '' : 's'} sin stock</b><span>${esc(sin.map((x) => `${x.m.name} (${x.l.account})`).join(', '))} → no hay nada pedido: si se vende no puedes enviarlo</span></button>`);
+  if (cam.length) items.push(`<button class="alert" data-a="listing" data-id="${esc(cam[0].l.id)}"><b>${cam.length} anuncio${cam.length === 1 ? '' : 's'} con el stock en camino</b><span>${esc(cam.map((x) => `${x.m.name}: llega ~${shortDate(x.arr.eta)}${x.ok ? '' : ' (más de 7 días: si se vende hoy, no llegas al plazo)'}`).join(' · '))}</span></button>`);
+  const cw = costWarnings();
+  if (cw.length) items.push(`<button class="alert" data-a="model" data-id="${esc(cw[0].m.id)}"><b>Coste puesto a mano que no cuadra</b><span>${esc(cw.map((x) => `${x.m.name}: ${eur(x.typed)} y ${x.why}`).join(' · '))}</span></button>`);
+  return items.join('');
+}
 function dataAlerts() {
   const fix = salesToFix().length, noW = L('models').filter((m) => m.status !== 'descartado' && (n0(m.home) || n0(m.transit)) && !(n0(m.weight) > 0));
   const items = [];
   if (fix) items.push(`<button class="alert" data-a="orphans"><b>${fix} venta${fix === 1 ? '' : 's'} sin reloj o sin coste</b><span>toca para arreglarlas</span></button>`);
   if (noW.length) items.push(`<button class="alert" data-a="model" data-id="${esc(noW[0].id)}"><b>Falta el peso de ${noW.length} reloj${noW.length === 1 ? '' : 'es'}</b><span>${esc(noW.map((m) => m.name).join(', '))}</span></button>`);
+  const rk = riskAlerts(); if (rk) items.push(rk);
   return items.length ? `<div class="alerts">${items.join('')}</div>` : '';
 }
 // Hoy: the goals still open, closest to done first
@@ -833,7 +894,7 @@ function viewToday() {
   const fix = salesToFix().length, nm = B.addD(t, 31).slice(0, 7);
   const bills = L('bills').filter((b) => !b.paid && b.month <= nm).sort((x, y) => x.month.localeCompare(y.month));
   const pl = plan(), warn = warnLines(pl);
-  const todo = `${fix ? `<button class="alert" data-a="orphans"><b>${fix} venta${fix === 1 ? '' : 's'} sin reloj o sin coste</b><span>toca para arreglarlas</span></button>` : ''}
+  const todo = `${riskAlerts()}${fix ? `<button class="alert" data-a="orphans"><b>${fix} venta${fix === 1 ? '' : 's'} sin reloj o sin coste</b><span>toca para arreglarlas</span></button>` : ''}
     ${bills.length ? `<div class="hy-bills"><div class="hy-sub">Pagos que vienen · ${eur(sum(bills.map((b) => n0(b.amount))))}</div>${bills.map((b) => `<div class="kv"><span>${esc(b.concept)} <span class="mut">· ${b.month === mk ? 'este mes' : monthName(b.month).split(' ')[0].toLowerCase()}</span></span><b>${eur(n0(b.amount))}</b></div>`).join('')}</div>` : ''}
     <div class="todos">${warn}</div>`;
   const lead = brain().lead, open = L('orders').filter((o) => !o.draft && o.status !== 'recibido').sort((x, y) => (x.date || '').localeCompare(y.date || ''));
@@ -999,8 +1060,9 @@ const pickModels = () => sortedModels().filter((m) => m.status !== 'descartado' 
 async function recordSale({ m, price, cost, acc, date, pouch, listing, views, likes, soldAt }) {
   const dec = n0(m.home) > 0, extra = pouch ? pouchCost() : 0, pouchFromStock = pouch && pouches() > 0, at = soldAt || nowISO();
   const lst = listing || L('listings').filter((l) => l.modelId === m.id && l.account === acc && l.status === 'live').sort((a, b) => a.listedAt.localeCompare(b.listedAt))[0] || null;
-  const c = isNaN(cost) ? num(m.landed) : cost, miss = isNaN(c);
-  const sale = await db.put(C.sales, { date, at, modelId: m.id, modelName: m.name, price: r2(price), cost: miss ? 0 : r2(c + extra), watchCost: miss ? 0 : r2(c), extra: r2(extra), profit: miss ? null : r2(price - c - extra), costMissing: miss || undefined, account: acc, fromStock: dec, pouch: !!pouch, pouchFromStock, listingId: lst ? lst.id : null, released: false });
+  const c = isNaN(cost) ? num(m.landed) : cost, miss = isNaN(c), manual = !isNaN(cost) && !isNaN(num(m.landed)) && Math.abs(cost - num(m.landed)) >= 0.005;
+  // nothing at home: the unit comes from what's on the way and the buyer waits → reserved, with Vinted's 7-day ship deadline
+  const sale = await db.put(C.sales, { date, at, modelId: m.id, modelName: m.name, price: r2(price), cost: miss ? 0 : r2(c + extra), watchCost: miss ? 0 : r2(c), extra: r2(extra), profit: miss ? null : r2(price - c - extra), costMissing: miss || undefined, costManual: manual || undefined, account: acc, fromStock: dec, reserved: !dec || undefined, shipBy: shiftDay(date, 7), pouch: !!pouch, pouchFromStock, listingId: lst ? lst.id : null, released: false });
   if (lst) {
     const last = (lst.snaps || []).slice().sort((a, b) => b.at.localeCompare(a.at))[0] || {};
     const v = isNaN(views) ? n0(last.views) || null : views, f = isNaN(likes) ? (last.views ? n0(last.favs) : null) : likes;
@@ -1008,7 +1070,9 @@ async function recordSale({ m, price, cost, acc, date, pouch, listing, views, li
   }
   if (pouchFromStock) await patchSettings({ pouches: pouches() - 1 });
   if (dec) await db.patch(C.models, m.id, { home: n0(m.home) - 1 });
-  return { sale, lst, profit: miss ? null : price - c - extra };
+  if (!manual) await relotSales(m.id);
+  const fresh = db.get(C.sales, sale.id) || sale;
+  return { sale: fresh, lst, profit: fresh.costMissing ? null : n0(fresh.profit) };
 }
 
 /* ================= listings: per account, time to sell, best time to post ================= */
@@ -1083,6 +1147,10 @@ function viewListings() {
     <div class="g2"><div class="col"><div class="accs2">${cols}</div>${panel('Vendidos', `<div class="llist">${sold.map((l) => listingRow(l, bench)).join('') || empty('Cuando marques un anuncio como vendido sale aquí con lo que tardó y con cuántas vistas y likes.')}</div>`)}</div>
     <div class="col">${bestTimePanel()}${panel('Cómo se puntúa', `<div class="ins"><div><b>A</b> muy bueno · <b>B</b> bueno · <b>C</b> normal · <b>D</b> flojo</div><div class="mut sm2">Likes por vista (50%), vistas por día (30%) y ofertas (20%), comparado con ${bench.learned ? `cómo estaban tus anuncios cuando se vendieron (${bench.n} ventas)` : 'valores de arranque hasta que tengas 3 ventas apuntadas desde aquí'}. * = menos de 20 vistas, aún poco fiable.</div></div>`)}</div></div>`;
 }
+// photo style of the cover and its angle: to compare which photos sell fastest (days to sale, not views)
+const PSTYLE = ['gris', 'almohada', 'muñeca-traje', 'muñeca', 'mujer', 'y2k', 'caja', 'otro'], PANGLE = ['frente', 'muñeca', 'lado', 'cierre', 'detalle', 'caja'];
+const styleFields = (p, l = {}) => `<div class="fields2"><div class="field"><label for="${p}-sty">Estilo de foto (portada)</label><select id="${p}-sty"><option value="">—</option>${PSTYLE.map((v) => `<option${l.style === v ? ' selected' : ''}>${v}</option>`).join('')}</select></div><div class="field"><label for="${p}-ang">Ángulo de la portada</label><select id="${p}-ang"><option value="">—</option>${PANGLE.map((v) => `<option${l.angle === v ? ' selected' : ''}>${v}</option>`).join('')}</select></div></div>`;
+const styleOf = (p) => ({ style: sv(p + '-sty') || null, angle: sv(p + '-ang') || null });
 function anuncioSheet(ctx) {
   const l = db.get(C.listings, ctx.id); if (!l) return head('ANUNCIO') + empty('Ya no existe.');
   const m = model(l.modelId), s = lastSnap2(l), r = rateListing(l, soldBench()), h = hrsBetween(l.listedAt, l.status === 'sold' ? l.soldAt : null);
@@ -1091,6 +1159,7 @@ function anuncioSheet(ctx) {
   return head('ANUNCIO') + top +
     `<div class="eyebrow">Stats de ahora</div><div class="fields3">${fld('an-v', 'Vistas', s ? n0(s.views) : '', 'inputmode="numeric"')}${fld('an-f', 'Likes', s ? n0(s.favs) : '', 'inputmode="numeric"')}${fld('an-o', 'Ofertas', s ? n0(s.offers) : '', 'inputmode="numeric"')}</div>
     <button class="btn-o" data-a="an-stats">Guardar stats</button>
+    ${styleFields('ae', l)}
     <div class="sold-box"><div class="eyebrow">¿Se ha vendido?</div><div class="fields2">${fld('an-p', 'Vendido por (€)', String(n0(l.price)).replace('.', ','))}<div class="field"><label for="an-at">Cuándo</label><input id="an-at" type="datetime-local" value="${(() => { const d = new Date(); return dayKey(d) + 'T' + hhmm(d.toISOString()); })()}"></div></div>
     <div class="fields2">${fld('an-sv', 'Vistas al venderse', s ? n0(s.views) : '', 'inputmode="numeric"')}${fld('an-sf', 'Likes al venderse', s ? n0(s.favs) : '', 'inputmode="numeric"')}</div>
     <label class="check"><input type="checkbox" id="an-pouch"${lsGet('lg_pouch', '1') === '1' ? ' checked' : ''}> Va con bolsita</label>
@@ -1103,6 +1172,7 @@ function anuncioNewSheet(ctx) {
   const m = model(sel) || {};
   return head('ANUNCIO PUBLICADO') + `<div class="field"><span class="lb">Reloj</span>${watchPicker('an-m', sel, ms)}</div>
     <div class="fields2"><div class="field"><label for="an-acc">Cuenta</label><select id="an-acc">${accs.map((a) => `<option${a === acc ? ' selected' : ''}>${esc(a)}</option>`).join('')}</select></div>${fld('an-price', 'Precio (€)', !isNaN(num(m.listPrice)) ? String(m.listPrice).replace('.', ',') : '')}</div>
+    ${styleFields('an')}
     <div class="hint">La hora se guarda sola (ahora). Si lo subiste antes, cámbiala después en el anuncio.</div><div class="err" id="sh-err"></div><button class="primary" data-a="an-save">Guardar</button>`;
 }
 
@@ -1112,12 +1182,18 @@ function listingsData() {
   const snapTxt = (l) => (l.snaps || []).slice().sort((a, b) => a.at.localeCompare(b.at)).map((x) => `${Math.round(hrsBetween(l.listedAt, x.at))}h: ${n0(x.views)}v/${n0(x.favs)}l/${n0(x.offers)}o`);
   const ls = L('listings').filter((l) => l.listedAt);
   const bt = bestTimes();
+  // views/likes/offers at 24h and 48h: the stats snapshot closest to that hour (within ±12h)
+  const at = (l, h) => { const ss = (l.snaps || []).map((x) => ({ x, d: Math.abs(hrsBetween(l.listedAt, x.at) - h) })).filter((z) => z.d <= 12).sort((a, b) => a.d - b.d); return ss.length ? `${n0(ss[0].x.views)}v/${n0(ss[0].x.favs)}l/${n0(ss[0].x.offers)}o` : null; };
+  const row = (l) => ({ estilo: l.style || null, angulo: l.angle || null, a_24h: at(l, 24), a_48h: at(l, 48) });
+  const sold = ls.filter((l) => l.status === 'sold' && l.hoursToSell !== null && l.hoursToSell !== undefined);
+  const group = (k) => { const g = {}; for (const l of ls) { const v = l[k] || 'sin marcar'; (g[v] = g[v] || { publicados: 0, vendidos: 0, h: [] }).publicados++; if (sold.includes(l)) { g[v].vendidos++; g[v].h.push(n0(l.hoursToSell)); } } return Object.entries(g).map(([v, x]) => ({ [k === 'style' ? 'estilo' : 'angulo']: v, publicados: x.publicados, vendidos: x.vendidos, dias_hasta_venta_mediana: x.h.length ? Math.round(med(x.h) / 24 * 10) / 10 : null })).sort((a, b) => (a.dias_hasta_venta_mediana ?? 99) - (b.dias_hasta_venta_mediana ?? 99)); };
   return {
     referencia_nota: { likes_por_vista: r2_(bench.like), vistas_dia: Math.round(bench.vpd), fuente: bench.learned ? `${bench.n} anuncios vendidos` : 'valores de arranque' },
     por_cuenta: accStats().map((x) => ({ cuenta: x.a, ventas_30d: x.n30, pct_ventas: Math.round(x.share * 100), beneficio_30d: r2_(x.pr30), activos: x.live, tarda_mediana_h: x.tts === null ? null : Math.round(x.tts) })),
-    activos: ls.filter((l) => l.status === 'live').map((l) => { const r = rateListing(l, bench); return { reloj: name(l), cuenta: l.account, precio: n0(l.price), publicado: l.listedAt, horas: Math.round(hrsBetween(l.listedAt)), stats: snapTxt(l), nota: r.grade, puntos: r.score }; }),
-    vendidos: ls.filter((l) => l.status === 'sold').sort((a, b) => (b.soldAt || '').localeCompare(a.soldAt || '')).slice(0, 40).map((l) => ({ reloj: name(l), cuenta: l.account, precio: n0(l.soldPrice || l.price), publicado: l.listedAt, vendido: l.soldAt, horas_hasta_venta: l.hoursToSell === null || l.hoursToSell === undefined ? null : Math.round(n0(l.hoursToSell)), vistas: l.viewsAtSale ?? null, likes: l.likesAtSale ?? null, stats: snapTxt(l) })),
-    quitados_sin_vender: ls.filter((l) => l.status === 'down' || l.status === 'removed').slice(-20).map((l) => ({ reloj: name(l), cuenta: l.account, precio: n0(l.price), publicado: l.listedAt, quitado: l.endedAt, horas: l.endedAt ? Math.round(hrsBetween(l.listedAt, l.endedAt)) : null, por: l.status === 'removed' ? 'Vinted (reporte)' : 'tú', stats: snapTxt(l) })),
+    por_estilo_de_foto: group('style'), por_angulo: group('angle'),
+    activos: ls.filter((l) => l.status === 'live').map((l) => { const r = rateListing(l, bench), m = model(l.modelId), st2 = stockOf(l.modelId); return { reloj: name(l), cuenta: l.account, precio: n0(l.price), publicado: l.listedAt, horas: Math.round(hrsBetween(l.listedAt)), ...row(l), stats: snapTxt(l), nota: r.grade, puntos: r.score, stock: st2 ? (st2.home - (st2.reserved || 0) > 0 ? 'en casa' : st2.arrivals[0] ? `en camino, llega ~${st2.arrivals[0].eta}` : 'SIN STOCK y nada pedido') : (m ? 'sin datos' : '?') }; }),
+    vendidos: ls.filter((l) => l.status === 'sold').sort((a, b) => (b.soldAt || '').localeCompare(a.soldAt || '')).slice(0, 40).map((l) => ({ reloj: name(l), cuenta: l.account, precio_anuncio: n0(l.price), precio_final: n0(l.soldPrice || l.price), publicado: l.listedAt, vendido: l.soldAt, horas_hasta_venta: l.hoursToSell === null || l.hoursToSell === undefined ? null : Math.round(n0(l.hoursToSell)), ...row(l), vistas: l.viewsAtSale ?? null, likes: l.likesAtSale ?? null, ofertas: n0((lastSnap2(l) || {}).offers), stats: snapTxt(l) })),
+    quitados_sin_vender: ls.filter((l) => l.status === 'down' || l.status === 'removed').slice(-20).map((l) => ({ reloj: name(l), cuenta: l.account, precio: n0(l.price), publicado: l.listedAt, quitado: l.endedAt, horas: l.endedAt ? Math.round(hrsBetween(l.listedAt, l.endedAt)) : null, por: l.status === 'removed' ? 'Vinted (reporte)' : 'tú', ...row(l), stats: snapTxt(l) })),
     mejor_hora: bt.n >= 5 ? bt.slots.map((r) => ({ franja: `${SLOTS[r.i][0]} ${SLOTS[r.i][1]}-${SLOTS[r.i][2]}h`, publicados: r.posted, vendidos: r.sold, tarda_mediana_h: r.tts === null ? null : Math.round(r.tts) })) : `faltan datos (${bt.n} de 5 ventas apuntadas desde Anuncios)`,
   };
 }
@@ -1300,7 +1376,7 @@ function viewTests() {
   const bench = `<table class="xl"><tbody>
     <tr class="big"><th>Tests corriendo</th><td class="n"><span class="${bz.running < bz.benchN ? 'neg' : 'pos'}">${bz.running}</span><span class="sub" style="display:inline"> de ${bz.benchN} a la vez</span></td></tr>
     ${tr('Tests por semana', `<b>${bz.tp.perWeek}</b>`)}
-    ${tr('Ganadores que faltan', `${bz.tp.winnersNeeded} <span class="sub" style="display:inline">· para ${bz.tp.target} ventas/mes, un ganador hace ~${Math.round(bz.tp.perWinner)}/mes</span>`)}
+    ${tr('Ganadores que faltan', bz.tp.winnersNeeded === null ? '<span class="sub" style="display:inline">sin ritmo aún</span>' : `${bz.tp.winnersNeeded} <span class="sub" style="display:inline">· para ${bz.tp.target} ventas (${bz.tp.targetMonth}), un ganador hace ~${Math.round(bz.tp.perWinner)}/mes</span>`)}
     ${tr('De cada 4 tests sale', `${(bz.tp.hit * 4).toFixed(1).replace('.', ',')} ganador`)}
     ${tr('Favoritos de un ganador tuyo', pct(b.fav))}
     ${tr('Vistas por día de un ganador', Math.round(b.vpd))}
@@ -1486,8 +1562,18 @@ function sheetHTML() {
     const pb = payback()[o.id], c = st.confirm === 'orders/' + o.id;
     return head('PEDIDO ' + shortDate(o.date).toUpperCase()) + orderBody(o, pb) +
       (n0(o.owed) ? `<div class="fields2">${fld('d-amt', 'Pagar ahora de lo que debes (€)', String(n0(o.owed)).replace('.', ','))}<div class="field"><label>&nbsp;</label><button class="btn-g" data-a="save-debt" style="padding:10px">Pagar</button></div></div><div class="err" id="sh-err"></div>` : '') +
-      (o.status !== 'recibido' ? `<button class="primary" data-a="receive" data-id="${esc(o.id)}">Ha llegado</button>` : '') +
+      (o.status !== 'recibido' ? `<button class="primary" data-a="receive" data-id="${esc(o.id)}">Ha llegado</button>` : '') + `<button class="btn-o" data-a="order-edit" data-id="${esc(o.id)}">Corregir pedido (proveedor, vía, envío, IVA, fechas)</button>` +
       `<button class="danger" data-a="del-order">${c ? 'Pulsa otra vez para borrar' : 'Borrar pedido'}</button>`;
+  }
+  if (kind === 'order-edit') {
+    const o = db.get(C.orders, ctx.id); if (!o) return head('PEDIDO') + empty('Este pedido ya no existe.');
+    return head('CORREGIR PEDIDO') + `<div class="fields2"><div class="field"><label for="oe-sup">Proveedor</label><select id="oe-sup">${Object.entries(SUPPLIER).map(([v, l]) => `<option value="${v}"${(o.supplier || '1688') === v ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
+      <div class="field"><label for="oe-lane">Vía</label><select id="oe-lane">${[['ddp', 'DDP (impuestos incluidos)'], ['dua', 'DUA (impuestos al llegar)'], ['ali', 'AliExpress']].map(([v, l]) => `<option value="${v}"${((o.lane === 'dhl' ? 'dua' : o.lane === 'otro' ? 'ddp' : o.lane) || 'ddp') === v ? ' selected' : ''}>${l}</option>`).join('')}</select></div></div>
+      <div class="fields2">${fld('oe-ship', 'Envío (€)', n0(o.shipping))}${fld('oe-vat', 'IVA y otros cargos pagados (€)', n0(o.vat))}</div>
+      <div class="fields2">${dateFld('oe-date', o.date, 'Pedido (pagado)')}<div class="field"><label for="oe-sent">Enviado por el proveedor</label><input id="oe-sent" type="date" value="${esc(o.shippedDate || '')}"></div></div>
+      ${o.status === 'recibido' ? `<div class="fields2">${dateFld('oe-rec', o.receivedDate, 'Recibido')}${fld('oe-dhl', 'Impuestos al llegar (DUA, €)', n0(o.dhl))}</div>` : ''}
+      <div class="hint">Total del pedido ahora: ${eur(n0(o.goods) + n0(o.shipping) + n0(o.vat) + n0(o.dhl))}. Al guardar se recalcula el coste por reloj y el de las ventas que salieron de este pedido.</div>
+      <div class="err" id="sh-err"></div><button class="primary" data-a="save-order-edit">Guardar</button>`;
   }
   if (kind === 'receive') {
     const o = db.get(C.orders, ctx.id) || {};
@@ -1502,6 +1588,7 @@ function sheetHTML() {
       `<div class="field"><label for="m-status">Estado</label><select id="m-status">${Object.keys(STATUS).map((k) => `<option value="${k}"${m.status === k ? ' selected' : ''}>${STATUS[k]}</option>`).join('')}</select></div>
       <div class="fields2">${fld('m-landed', 'Coste puesto (€)', m.landed)}${fld('m-list', 'Precio de venta (€)', m.listPrice)}</div>
       <div class="fields2">${fld('m-min', 'Precio mínimo (€)', m.minPrice)}${fld('m-unit', '€/ud en 1688', m.unitPrice)}</div>
+      ${fld('m-link', 'Enlace del proveedor (1688 / AliExpress)', m.link || '', 'autocomplete="off" inputmode="url" placeholder="https://detail.1688.com/…"')}
       <div class="fields2">${fld('m-home', 'En casa', m.home || 0, 'inputmode="numeric"')}${fld('m-transit', 'En camino', m.transit || 0, 'inputmode="numeric"')}</div>
       <div class="fields2">${fld('m-w', 'Peso con bolsa (g)', m.weight, 'inputmode="numeric"')}<div></div></div>
       <div class="hint">Coste puesto = precio 1688 + envío + impuestos (DUA), por unidad. Se calcula solo con los pedidos: el envío se reparte por peso (por eso hace falta el peso). ${ctx.id ? `Ahora: <b>${costSrc(m)}</b>.` : ''} Ganador solo con prueba: 1 venta o 2 ofertas; si no, se guarda como Test.</div><div class="err" id="sh-err"></div>
@@ -1519,7 +1606,7 @@ function sheetHTML() {
       ${fld('s-acc', 'Cuentas de venta (separadas por comas)', (s.accounts || []).join(', '), 'autocomplete="off"')}
       <div class="fields2">${fld('s-pend', 'Días que Vinted retiene el dinero', pendingDays(), 'inputmode="numeric"')}${fld('s-bench', 'Tests a la vez', n0(s.testBench) || B.FALLBACK.bench, 'inputmode="numeric"')}</div>
       <div class="fields2">${fld('s-maxacc', 'Máx. cuentas por reloj', n0(s.maxAccPerModel) || B.FALLBACK.maxAccPerModel, 'inputmode="numeric"')}${fld('s-cycle', 'Un DDP cubre (días de ventas)', n0(s.cycleDays) || B.FALLBACK.cycleDays, 'inputmode="numeric"')}</div>
-      <div class="fields2">${fld('s-lddp', 'Un pedido tarda (días, hasta medirlo)', n0(s.leadDDP) || B.FALLBACK.leadDDP, 'inputmode="numeric"')}<div></div></div>
+      <div class="fields2">${fld('s-lddp', 'DDP/DUA tarda (días, hasta medirlo)', n0(s.leadDDP) || B.FALLBACK.leadDDP, 'inputmode="numeric"')}${fld('s-lali', 'AliExpress tarda (días, hasta medirlo)', n0(s.leadAli) || B.FALLBACK.leadAli, 'inputmode="numeric"')}</div>
       <div class="hint">Los plazos se miden solos con tus pedidos recibidos; estos números solo se usan hasta entonces.</div>
       <div class="err" id="sh-err"></div><button class="primary" data-a="save-settings">Guardar</button>
       <button class="ghost" data-a="theme" style="justify-self:start">${document.documentElement.dataset.theme === 'dark' ? 'Usar tema claro' : 'Usar tema oscuro'}</button>
@@ -1598,7 +1685,7 @@ function sheetHTML() {
     const lp = !isNaN(num(m.listPrice)) ? String(m.listPrice).replace('.', ',') : '34,95';
     return head('ANUNCIO PUBLICADO') + `<div class="field"><label for="w-m">Reloj</label><select id="w-m">${ms.map((z) => `<option value="${esc(z.id)}"${z.id === m.id ? ' selected' : ''}>${esc(z.name)} · ${n0(z.home)} en casa</option>`).join('')}</select></div>
       <div class="fields2"><div class="field"><label for="w-acc">Cuenta</label><select id="w-acc">${accs.map((a) => `<option${a === acc ? ' selected' : ''}>${esc(a)}</option>`).join('')}</select></div>${fld('w-price', 'Precio (€)', lp)}</div>
-      <div class="hint">Cada anuncio apuntado = tests a tiempo, reparto entre cuentas y avisos de renovar.</div><div class="err" id="sh-err"></div><button class="primary" data-a="save-listing">Guardar</button>`;
+      ${styleFields('w')}<div class="hint">Cada anuncio apuntado = tests a tiempo, reparto entre cuentas y avisos de renovar.</div><div class="err" id="sh-err"></div><button class="primary" data-a="save-listing">Guardar</button>`;
   }
   if (kind === 'listing') {
     const l = db.get(C.listings, ctx.id); if (!l) return head('ANUNCIO') + empty('Ya no existe.');
@@ -1670,7 +1757,8 @@ function orderForm(ctx) {
       ${l.modelId === '__new' ? `<input id="l-n-${i}" style="background:var(--surface-2);border:1px solid var(--line);border-radius:11px;padding:10px 12px;font-size:15px" placeholder="Nombre del reloj nuevo" value="${esc(l.name)}" autocomplete="off">` : ''}</div>`).join('');
   return `${lines}<div><button class="ghost" data-a="addline">+ Otra línea</button></div>
     <div class="fields2">${fld('o-pq', 'Bolsitas (uds)', ctx.pq || '', 'inputmode="numeric" placeholder="0"')}${fld('o-pu', '€/bolsita en 1688', ctx.pu || '', 'inputmode="decimal" placeholder="0,30"')}</div>
-    <div class="fields2"><div class="field"><label for="o-lane">Vía</label><select id="o-lane">${[['ddp', 'DDP (impuestos incluidos)'], ['dua', 'DUA (impuestos al llegar)']].map(([v, l]) => `<option value="${v}"${((ctx.lane === 'dhl' ? 'dua' : ctx.lane) || 'ddp') === v ? ' selected' : ''}>${l}</option>`).join('')}</select></div>${fld('o-ship', 'Envío del agente (€)', ctx.ship || '', 'inputmode="decimal" placeholder="70"')}</div>
+    <div class="fields2"><div class="field"><label for="o-sup">Proveedor</label><select id="o-sup">${Object.entries(SUPPLIER).map(([v, l]) => `<option value="${v}"${(ctx.sup || '1688') === v ? ' selected' : ''}>${l}</option>`).join('')}</select></div>${fld('o-vat', 'IVA y otros cargos pagados (€)', ctx.vat || '', 'inputmode="decimal" placeholder="0"')}</div>
+    <div class="fields2"><div class="field"><label for="o-lane">Vía</label><select id="o-lane">${[['ddp', 'DDP (impuestos incluidos)'], ['dua', 'DUA (impuestos al llegar)'], ['ali', 'AliExpress']].map(([v, l]) => `<option value="${v}"${((ctx.lane === 'dhl' ? 'dua' : ctx.lane) || (ctx.sup === 'ali' ? 'ali' : 'ddp')) === v ? ' selected' : ''}>${l}</option>`).join('')}</select></div>${fld('o-ship', 'Envío del agente (€)', ctx.ship || '', 'inputmode="decimal" placeholder="70"')}</div>
     <div class="fields2">${fld('o-owed', 'Queda por pagar (€)', ctx.owed || '', 'inputmode="decimal" placeholder="0"')}${dateFld('o-date', ctx.date)}</div>
     ${fld('o-note', 'Nota (opcional)', ctx.note || '', 'autocomplete="off" placeholder="Ej. caja de 3 kg"')}
     <div class="preview" id="o-prev"></div>
@@ -1760,7 +1848,7 @@ function landedFromOrder(o) {
   const lines = (o.lines || []).map((l) => ({ modelId: l.modelId, qty: n0(l.qty), unit: n0(l.unit) }));
   if (!lines.length || lines.some((l) => !(l.unit > 0) || !(l.qty > 0))) return null;
   const rec = o.status === 'recibido', pq = o.pouches ? n0(o.pouches.qty) : 0, pu = o.pouches ? n0(o.pouches.unit) : 0;
-  const al = allocLanded(lines, pq, pu, n0(o.shipping), rec ? n0(o.dhl) : 0, !rec && isDua(o));
+  const al = allocLanded(lines, pq, pu, n0(o.shipping), (rec ? n0(o.dhl) : 0) + n0(o.vat), !rec && isDua(o));
   const kinds = new Set(lines.map((l) => l.modelId)).size;
   // real = nothing left to pay on arrival (DDP, or received) and shipping split by weight (or only one watch in the box)
   al.src = (rec || !isDua(o)) && (al.byW || kinds === 1) ? 'real' : 'estimado';
@@ -1768,8 +1856,43 @@ function landedFromOrder(o) {
 }
 async function recalcOrder(o) {
   const al = o && landedFromOrder(o); if (!al) return;
-  for (const id in al.per) { const m = model(id); if (!m) continue; const lo = latestOrderOf(id); if (lo && lo.id !== o.id) continue; await db.patch(C.models, id, { landed: al.per[id].landed, landedSrc: al.src, landedOrder: o.id }); }
+  for (const id in al.per) { const m = model(id); if (!m) continue; const lo = latestOrderOf(id); if (!lo || lo.id === o.id) await db.patch(C.models, id, { landed: al.per[id].landed, landedSrc: al.src, landedOrder: o.id }); await relotSales(id); }
 }
+// Each sale costs what the box it came from cost (first in, first out). Boxes in the order they landed; units you had
+// before any logged order are the "opening" box and keep the cost the sale already has. A cost you typed on the sale stays.
+function lotsOf(mid) {
+  const os = L('orders').filter((o) => !o.draft && (o.lines || []).some((l) => l.modelId === mid));
+  const lot = (o) => { const al = landedFromOrder(o), q = sum((o.lines || []).filter((l) => l.modelId === mid).map((l) => n0(l.qty))); return { id: o.id, date: o.receivedDate || null, placed: o.date, qty: q, cost: al && al.per[mid] ? al.per[mid].landed : null, src: al ? al.src : null }; };
+  const rec = os.filter((o) => o.status === 'recibido' && o.receivedDate).sort((a, b) => a.receivedDate.localeCompare(b.receivedDate)).map(lot);
+  const way = os.filter((o) => o.status !== 'recibido').sort((a, b) => a.date.localeCompare(b.date)).map(lot);
+  return { rec, way };
+}
+function fifo(mid) {
+  const m = model(mid), ss = L('sales').filter((v) => v.modelId === mid && !v.cancelled).sort((a, b) => (a.at || a.date).localeCompare(b.at || b.date));
+  const { rec, way } = lotsOf(mid), got = sum(rec.map((l) => l.qty)), took = ss.filter((v) => !(v.reserved && !v.filled)).length;
+  const opening = Math.max(0, n0(m && m.home) + took - got), lots = [{ id: null, date: null, qty: opening, opening: true }, ...rec, ...way].map((l) => ({ ...l, left: l.qty }));
+  const out = [];
+  let i = 0;
+  for (const v of ss) {
+    while (i < lots.length && lots[i].left <= 0) i++;
+    const l = lots[i];
+    if (!l) { out.push({ v, lot: null }); continue; }
+    // a lot that landed after the sale can't have shipped it (unless it was sold before it arrived): treat as opening stock
+    if (!l.opening && l.date && l.date > v.date && !v.reserved) { out.push({ v, lot: { opening: true } }); continue; }
+    l.left -= 1; out.push({ v, lot: l });
+  }
+  return { out, lots };
+}
+async function relotSales(mid) {
+  const { out } = fifo(mid);
+  for (const { v, lot } of out) {
+    if (!lot || lot.opening || !(lot.cost > 0) || v.costManual) continue;
+    const wc = r2(lot.cost), extra = n0(v.extra);
+    if (!v.costMissing && Math.abs(n0(v.watchCost !== undefined ? v.watchCost : n0(v.cost) - extra) - wc) < 0.005 && v.lotId === lot.id) continue;
+    await db.patch(C.sales, v.id, { watchCost: wc, cost: r2(wc + extra), profit: r2(n0(v.price) - wc - extra), costMissing: false, lotId: lot.id, costFrom: 'pedido ' + lot.placed + (lot.src === 'estimado' ? ' (estimado)' : '') });
+  }
+}
+async function relotAll() { for (const m of L('models')) await relotSales(m.id); }
 function readLines() {
   const c = st.sheet.ctx;
   c.lines = c.lines.map((l, i) => {
@@ -1778,12 +1901,12 @@ function readLines() {
     // another watch picked on this line: its own 1688 price and weight get filled in again
     return { modelId: mid, qty: sv('l-q-' + i), unit: changed ? '' : sv('l-u-' + i), w: changed ? '' : sheetEl.querySelector('#l-w-' + i) ? sv('l-w-' + i) : l.w, name: sheetEl.querySelector('#l-n-' + i) ? sv('l-n-' + i) : l.name };
   });
-  c.ship = sv('o-ship'); c.date = sv('o-date'); c.note = sv('o-note'); c.pq = sv('o-pq'); c.pu = sv('o-pu'); c.lane = sv('o-lane') || c.lane; c.owed = sv('o-owed');
+  c.ship = sv('o-ship'); c.date = sv('o-date'); c.note = sv('o-note'); c.pq = sv('o-pq'); c.pu = sv('o-pu'); c.lane = sv('o-lane') || c.lane; c.owed = sv('o-owed'); c.sup = sv('o-sup') || c.sup; c.vat = sv('o-vat');
   return c.lines;
 }
 function orderPreview() {
   const box = sheetEl.querySelector('#o-prev'); if (!box) return;
-  const lines = readLines(), ship = n0(sv('o-ship')), pq = n0(sv('o-pq')), pu = n0(sv('o-pu')), pg = pq * pu, lane = sv('o-lane'), owed = n0(sv('o-owed'));
+  const lines = readLines(), ship = n0(sv('o-ship')) + n0(sv('o-vat')), pq = n0(sv('o-pq')), pu = n0(sv('o-pu')), pg = pq * pu, lane = sv('o-lane'), owed = n0(sv('o-owed'));
   const ls = lines.filter((l) => n0(l.qty) && n0(l.unit)).map((l) => ({ modelId: l.modelId, qty: n0(l.qty), unit: n0(l.unit), w: n0(l.w), name: l.name }));
   const wgoods = sum(ls.map((l) => l.qty * l.unit)), goods = wgoods + pg, units = sum(lines.map((l) => n0(l.qty)));
   const al = allocLanded(ls, pq, pu, ship, 0, lane === 'dua'), now = goods + ship - owed, iva = lane === 'dua' ? 0.21 * (goods + ship) : 0;
@@ -1793,6 +1916,7 @@ function orderPreview() {
     ${ls.map((l) => { const m = model(l.modelId), p = al.per[l.modelId]; return p ? `<div class="kv"><span class="mut">Coste/ud ${esc(m ? m.name : l.name || 'nuevo')}${al.byW ? '' : ' (sin peso: envío por valor)'}</span><b>≈ ${eur(p.landed)}</b></div>` : ''; }).join('')}`;
 }
 function afterSheet() {
+  for (const f of ['sty', 'ang']) { const e = sheetEl.querySelector('#ae-' + f); if (e) e.addEventListener('change', async () => { await db.patch(C.listings, st.sheet.ctx.id, { [f === 'sty' ? 'style' : 'angle']: e.value || null }); toast('Guardado'); }); }
   const sel = sheetEl.querySelector('#f-model');
   if (sel) {
     const prev = () => {
@@ -1893,12 +2017,26 @@ async function saveOrder() {
     const m = model(mid);
     out.push({ modelId: mid, name: m ? m.name : l.name, qty: parseInt(l.qty, 10), unit: r2(num(l.unit)) });
   }
-  const goods = r2(sum(out.map((l) => l.qty * l.unit)) + (pq ? pq * pu : 0)), sh = isNaN(ship) ? 0 : r2(ship), lane = sv('o-lane') === 'dua' ? 'dua' : 'ddp';
-  const owed = Math.min(goods + sh, Math.max(0, r2(n0(sv('o-owed'))))), al = allocLanded(out, pq, pq ? pu : 0, sh, 0, lane === 'dua');
-  const o = await db.put(C.orders, { date, at: nowISO(), note: sv('o-note'), lane, lines: out, pouches: pq ? { qty: pq, unit: r2(pu) } : null, goods, shipping: sh, paid: r2(goods + sh - owed), owed: r2(owed), payments: [], dhl: 0, status: 'camino' });
+  const goods = r2(sum(out.map((l) => l.qty * l.unit)) + (pq ? pq * pu : 0)), sh = isNaN(ship) ? 0 : r2(ship), lane = ['dua', 'ali'].includes(sv('o-lane')) ? sv('o-lane') : 'ddp', vat = r2(Math.max(0, n0(sv('o-vat')))), sup = sv('o-sup') || '1688';
+  const owed = Math.min(goods + sh + vat, Math.max(0, r2(n0(sv('o-owed'))))), al = allocLanded(out, pq, pq ? pu : 0, sh, vat, lane === 'dua');
+  const o = await db.put(C.orders, { date, at: nowISO(), note: sv('o-note'), supplier: sup, lane, lines: out, pouches: pq ? { qty: pq, unit: r2(pu) } : null, goods, shipping: sh, vat, paid: r2(goods + sh + vat - owed), owed: r2(owed), payments: [], dhl: 0, status: 'camino' });
   const lf = landedFromOrder(o);
   for (const id in al.per) { const m = model(id); const l = out.find((z) => z.modelId === id); await db.patch(C.models, id, { transit: n0(m && m.transit) + al.per[id].qty, landed: al.per[id].landed, landedSrc: lf ? lf.src : 'estimado', landedOrder: o.id, unitPrice: l.unit }); }
+  for (const id in al.per) await relotSales(id);
   closeSheet(); st.tab = 'stock'; st.stockSeg = 'pedidos'; lsSet('lg_seg', 'pedidos'); location.hash = 'stock'; renderSoon(); toast('Pedido guardado · −' + eur(goods + sh - owed) + ' de caja' + (owed ? ' · debes ' + eur(owed) : ''));
+}
+async function saveOrderEdit() {
+  const o = db.get(C.orders, st.sheet.ctx.id); if (!o) return closeSheet();
+  const date = sv('oe-date'), sent = sv('oe-sent'), ship = r2(Math.max(0, n0(sv('oe-ship')))), vat = r2(Math.max(0, n0(sv('oe-vat'))));
+  if (!validDate(date)) return shErr('Pon una fecha válida.');
+  const lane = ['dua', 'ali'].includes(sv('oe-lane')) ? sv('oe-lane') : 'ddp';
+  const p = { supplier: sv('oe-sup') || '1688', lane, shipping: ship, vat, date, shippedDate: /^\d{4}-\d{2}-\d{2}$/.test(sent) ? sent : null };
+  // what you paid when ordering = goods + shipping + VAT − what you still owe − what you paid later
+  p.paid = r2(n0(o.goods) + ship + vat - n0(o.owed) - sum(payments(o).map((x) => n0(x.amount))));
+  if (o.status === 'recibido') { const rd = sv('oe-rec'); if (validDate(rd)) p.receivedDate = rd; p.dhl = r2(Math.max(0, n0(sv('oe-dhl')))); }
+  await db.patch(C.orders, o.id, p);
+  await recalcOrder(db.get(C.orders, o.id));
+  closeSheet(); toast('Pedido corregido · total ' + eur(n0(o.goods) + ship + vat + n0(p.dhl !== undefined ? p.dhl : o.dhl)));
 }
 async function saveReceive() {
   const o = db.get(C.orders, st.sheet.ctx.id); if (!o) return closeSheet();
@@ -1906,9 +2044,16 @@ async function saveReceive() {
   if (!validDate(date)) return shErr('Pon una fecha válida.');
   const d = isNaN(dhl) ? 0 : r2(dhl);
   const pq = o.pouches ? n0(o.pouches.qty) : 0, pu = o.pouches ? n0(o.pouches.unit) : 0;
-  const al = allocLanded((o.lines || []).map((l) => ({ modelId: l.modelId, qty: n0(l.qty), unit: n0(l.unit) })), pq, pu, n0(o.shipping), d, false);
+  const al = allocLanded((o.lines || []).map((l) => ({ modelId: l.modelId, qty: n0(l.qty), unit: n0(l.unit) })), pq, pu, n0(o.shipping), d + n0(o.vat), false);
   await db.patch(C.orders, o.id, { status: 'recibido', dhl: d, receivedDate: date, receivedAt: nowISO() });
-  for (const id in al.per) { const m = model(id); if (!m) continue; await db.patch(C.models, id, { transit: Math.max(0, n0(m.transit) - al.per[id].qty), home: n0(m.home) + al.per[id].qty, landed: al.per[id].landed, landedSrc: al.byW || Object.keys(al.per).length === 1 ? 'real' : 'estimado', landedOrder: o.id }); }
+  for (const id in al.per) {
+    const m = model(id); if (!m) continue;
+    // units already sold before the box landed go straight to those buyers
+    const res = L('sales').filter((v) => v.modelId === id && v.reserved && !v.filled && !v.cancelled).sort((a, b) => (a.at || a.date).localeCompare(b.at || b.date)).slice(0, al.per[id].qty);
+    for (const v of res) await db.patch(C.sales, v.id, { filled: date, fromStock: true });
+    await db.patch(C.models, id, { transit: Math.max(0, n0(m.transit) - al.per[id].qty), home: n0(m.home) + al.per[id].qty - res.length, landed: al.per[id].landed, landedSrc: al.byW || Object.keys(al.per).length === 1 ? 'real' : 'estimado', landedOrder: o.id });
+    await relotSales(id);
+  }
   if (pq) await patchSettings({ pouches: pouches() + pq, pouchCost: al.pouch });
   closeSheet(); toast('Recibido · pasado a casa');
 }
@@ -1931,7 +2076,7 @@ async function saveModel() {
   if (!name) return shErr('Ponle un nombre.');
   const opt = (v) => { const x = num(v); return isNaN(x) ? null : r2(x); };
   const ctxp = st.sheet.ctx.photo;
-  const data = { name, family: sv('m-fam') || null, ...(ctxp !== undefined ? { photo: ctxp } : {}), status: sv('m-status'), landed: opt(sv('m-landed')), listPrice: opt(sv('m-list')), minPrice: opt(sv('m-min')), unitPrice: opt(sv('m-unit')), weight: opt(sv('m-w')), home: Math.max(0, Math.round(n0(sv('m-home')))), transit: Math.max(0, Math.round(n0(sv('m-transit')))) };
+  const data = { name, family: sv('m-fam') || null, ...(ctxp !== undefined ? { photo: ctxp } : {}), status: sv('m-status'), landed: opt(sv('m-landed')), listPrice: opt(sv('m-list')), minPrice: opt(sv('m-min')), unitPrice: opt(sv('m-unit')), link: sv('m-link') || null, weight: opt(sv('m-w')), home: Math.max(0, Math.round(n0(sv('m-home')))), transit: Math.max(0, Math.round(n0(sv('m-transit')))) };
   const old = id ? model(id) || {} : {};
   let note = 'Guardado';
   if (data.status === 'ganador' && old.status !== 'ganador' && !B.proofOf({ ...old, id }, L('sales').filter((x) => !x.cancelled), L('listings')).ok) { data.status = 'test'; note = 'Guardado como Test: ganador con 1 venta o 2 ofertas'; }
@@ -1953,7 +2098,7 @@ async function saveSettings() {
   const dc = num(sv('s-defcost')), pc = num(sv('s-pouchcost')), pq = num(sv('s-pouches'));
   const cur = S0(), patch = { cushion: isNaN(cush) ? 0 : r2(cush), monthlyGoal: r2(g), defaultCost: isNaN(dc) ? 10 : r2(dc), pouchCost: isNaN(pc) ? 0 : r2(pc), pouches: isNaN(pq) ? 0 : Math.max(0, Math.round(pq)), accounts: accs.length ? accs : cur.accounts };
   const int = (id, d) => { const v = Math.round(num(sv(id))); return isNaN(v) || v <= 0 ? d : v; };
-  Object.assign(patch, { pendingDays: int('s-pend', B.FALLBACK.pendingDays), testBench: int('s-bench', B.FALLBACK.bench), maxAccPerModel: int('s-maxacc', B.FALLBACK.maxAccPerModel), cycleDays: int('s-cycle', B.FALLBACK.cycleDays), leadDDP: int('s-lddp', B.FALLBACK.leadDDP) });
+  Object.assign(patch, { pendingDays: int('s-pend', B.FALLBACK.pendingDays), testBench: int('s-bench', B.FALLBACK.bench), maxAccPerModel: int('s-maxacc', B.FALLBACK.maxAccPerModel), cycleDays: int('s-cycle', B.FALLBACK.cycleDays), leadDDP: int('s-lddp', B.FALLBACK.leadDDP), leadAli: int('s-lali', B.FALLBACK.leadAli) });
   if (r2(cash) !== r2(bankNow())) { patch.cash = r2(cash); patch.cashAt = nowISO(); }
   const vb = {}; let vChanged = false;
   for (const a of acctNames()) { const v = num(sv('s-vb-' + a.replace(/\W/g, '_'))); vb[a] = isNaN(v) ? r2(vintedBalance(a)) : r2(v); if (vb[a] !== r2(vintedBalance(a))) vChanged = true; }
@@ -2058,7 +2203,7 @@ async function saveNewTest() {
 async function saveListing() {
   const m = model(sv('w-m')); if (!m) return shErr('Elige el reloj.');
   const price = num(sv('w-price')); if (isNaN(price) || price <= 0) return shErr('Pon el precio.');
-  await db.put(C.listings, { modelId: m.id, account: sv('w-acc'), price: r2(price), listedAt: nowISO(), status: 'live', snaps: [] });
+  await db.put(C.listings, { modelId: m.id, account: sv('w-acc'), price: r2(price), listedAt: nowISO(), status: 'live', snaps: [], ...styleOf('w') });
   if (isNaN(num(m.listPrice))) await db.patch(C.models, m.id, { listPrice: r2(price) });
   closeSheet(); toast('Anuncio apuntado');
 }
@@ -2099,8 +2244,77 @@ async function saveWithdraw() {
   closeSheet(); toast('Retiro guardado · +' + eur(amt) + ' al banco');
 }
 async function releaseSale(id) { const x = db.get(C.sales, id); if (x) await db.patch(C.sales, id, { released: true, releasedAt: nowISO() }); }
+/* ---------------- export extras ---------------- */
+function watchExtra(mid) {
+  const m = model(mid); if (!m) return {};
+  const ss = L('sales').filter((v) => v.modelId === mid && !v.cancelled);
+  const listP = (v) => { const l = v.listingId ? db.get(C.listings, v.listingId) : null; return l ? n0(l.price) : n0(m.listPrice); };
+  const withList = ss.filter((v) => listP(v) > 0), disc = withList.map((v) => listP(v) - n0(v.price)), acc = withList.filter((v) => n0(v.price) < listP(v) - 0.01);
+  const { lots } = fifo(mid);
+  return {
+    precio_anuncio: n0(m.listPrice) || undefined,
+    descuento_medio: disc.length ? r2(sum(disc) / disc.length) : undefined,
+    ofertas_aceptadas: withList.length ? `${acc.length} de ${withList.length} ventas por debajo del precio del anuncio` : undefined,
+    precio_mas_bajo_aceptado: ss.length ? r2(Math.min(...ss.map((v) => n0(v.price)))) : undefined,
+    reservas: ss.filter((v) => v.reserved && !v.shipped).map((v) => `vendida ${v.date} (${v.account || ''}) · enviar antes del ${v.shipBy || shiftDay(v.date, 7)}${v.filled ? ' · ya en casa: ENVIAR' : ''}`),
+    lotes: lots.filter((l) => l.qty > 0).map((l) => (l.opening ? `stock inicial sin pedido: ${l.qty} uds (las ventas de aquí guardan su coste)` : `pedido ${l.placed}${l.date ? ' recibido ' + l.date : ' en camino'}: ${l.qty} uds a ${l.cost === null ? 'coste FALTA' : r2(l.cost) + ' €'} (${l.src || ''}), quedan ${Math.max(0, l.left)}`)),
+  };
+}
+function accExtra(a) {
+  const t = todayKey(), ss = L('sales').filter((v) => !v.cancelled && v.account === a && v.date >= shiftDay(t, -29)), by = {};
+  for (const v of ss) { const n = (model(v.modelId) || {}).name || v.modelName; by[n] = (by[n] || 0) + 1; }
+  return { beneficio_30d: r2(sum(ss.map(profitOf))), por_reloj_30d: by };
+}
+function testHit() {
+  const was = L('models').filter((m) => (m.testStart || m.testWin || L('listings').some((l) => l.modelId === m.id)) && (m.status === 'ganador' || m.status === 'descartado'));
+  const tested = was.filter((m) => m.testStart || m.testWin), base = tested.length ? tested : was, w = base.filter((m) => m.status === 'ganador').length;
+  return { decididos: base.length, ganadores: w, acierto: base.length ? `${Math.round(w / base.length * 100)}% (${w} ganadores de ${base.length} tests decididos)` : 'sin tests decididos' };
+}
+function reservedFor(o) {
+  const res = L('sales').filter((v) => v.reserved && !v.filled && !v.cancelled && (o.lines || []).some((l) => l.modelId === v.modelId));
+  const mine = res.filter((v) => { const r = stockOf(v.modelId); return r && r.arrivals[0] && r.arrivals[0].id === o.id; });
+  return mine.length ? mine.map((v) => `${v.modelName} vendido ${v.date}, enviar antes del ${v.shipBy || shiftDay(v.date, 7)}`) : undefined;
+}
+function exportExtra() {
+  const t = todayKey(), pl = plan(), s = S0(), r = (v) => Math.round(v * 100) / 100, y = t.slice(0, 4);
+  const lim60 = shiftDay(t, 60).slice(0, 7);
+  const toFix = L('sales').filter((v) => !v.cancelled && (v.costMissing || !model(v.modelId)));
+  const cw = costWarnings(), ns = listingsNoStock(), rs = reservedSales();
+  const nd = (s.notDupes || []).map((k) => k.split('|').map((id) => (model(id) || {}).name || id).join(' ≠ '));
+  const stockVal = sum(brain().stocks.map((x) => x.home * x.cost)), transVal = sum(brain().stocks.map((x) => x.transit * x.cost));
+  const bank = bankNow(), vb = vintedBalance(), pv = pendingVinted();
+  const nm = shiftMonth(curMonth(), 1), np = (s.plan || {})[nm];
+  const pers = {}; for (const x of L('spend').filter((z) => z.kind !== 'negocio')) { const mk = x.date.slice(0, 7); (pers[mk] = pers[mk] || { total: 0, ahorro_o_retiro: 0 }); pers[mk].total = r(pers[mk].total + n0(x.amount)); if (/ahorro|retiro/i.test(x.cat || '')) pers[mk].ahorro_o_retiro = r(pers[mk].ahorro_o_retiro + n0(x.amount)); }
+  const ySales = L('sales').filter((v) => !v.cancelled && v.date.startsWith(y)), byAcc = {};
+  for (const v of ySales) { const a = v.account || 'sin cuenta'; (byAcc[a] = byAcc[a] || { ventas: 0, ingresos: 0 }); byAcc[a].ventas++; byAcc[a].ingresos = r(byAcc[a].ingresos + n0(v.price)); }
+  const rev = r(sum(ySales.map((v) => n0(v.price))));
+  return {
+    salud_datos: {
+      app: APP_V, exportado: nowISO(),
+      ventas_sin_coste_o_reloj: { n: toFix.length, lista: toFix.map((v) => `${v.date} ${v.modelName} ${v.price} €${v.costMissing ? ' · coste FALTA' : ' · sin reloj'}`) },
+      costes_a_mano_que_no_cuadran: { n: cw.length, lista: cw.map((x) => `${x.m.name}: ${r(x.typed)} € puesto a mano, pero ${x.why}`) },
+      anuncios_sin_stock: { n: ns.length, lista: ns.map((x) => `${x.m.name} (${x.l.account}, ${x.l.price} €): ${x.kind === 'sin' ? 'nada en casa ni pedido' : 'llega ~' + x.arr.eta + (x.ok ? '' : ', más de 7 días')}`) },
+      ventas_por_enviar: { n: rs.length, lista: rs.map((x) => `${x.m ? x.m.name : x.v.modelName} vendido ${x.v.date}: ${x.filled ? 'ya en casa, ENVIAR' : 'llega ~' + (x.eta || '¿?')}, plazo ${x.by}${x.late ? ' → NO LLEGA, pedir prórroga' : ''}`) },
+      duplicados_descartados: nd,
+    },
+    dinero: {
+      pagos_proximos_60_dias: L('bills').filter((b) => !b.paid && b.month <= lim60).sort((a, b) => a.month.localeCompare(b.month)).map((b) => `${b.month} ${b.concept} ${n0(b.amount)} €`),
+      pendiente_vinted_por_venta: pendingSales().map((v) => ({ venta: v.date, reloj: v.modelName, importe: n0(v.price), cuenta: v.account, se_libera_aprox: shiftDay(v.date, pendingDays()) })),
+      proyeccion_30_dias: pl.days.slice(0, 31).map((d, i) => ({ dia: d, real: r(pl.money0[i]), con_sugerencias: r(pl.money[i]) })),
+      proyeccion_nota: 'real = caja + Vinted pendiente que se libera + ventas a tu ritmo (con lo que hay y lo que viene) − pagos fijos − deuda − gasto diario; con_sugerencias = además paga los pedidos sugeridos',
+      gastos_personales_por_mes: pers,
+      capital_trabajando: { banco: r(bank), vinted: r(vb), pendiente_vinted: r(pv), stock_en_casa_a_coste: r(stockVal), en_camino_a_coste: r(transVal), total: r(bank + vb + pv + stockVal + transVal) },
+      capital_necesario_mes_siguiente: np && n0(np.sales) ? { mes: nm, ventas_objetivo: n0(np.sales), capital: n0(np.sales) * 20, formula: 'ventas objetivo × 20 €' } : 'sin objetivo de ventas para el mes que viene',
+    },
+    impuestos: {
+      ano: y, ingresos_ano_todas_las_cuentas: rev, ventas_ano: ySales.length, umbral_8000: `${rev} de 8.000 € (${Math.round(rev / 80)}%)`,
+      por_cuenta: Object.fromEntries(Object.entries(byAcc).map(([a, x]) => [a, { ...x, dac7: x.ventas >= 30 || x.ingresos >= 2000 ? 'PASA el umbral DAC7 (30 ventas o 2.000 €): Vinted lo comunica a Hacienda' : `${x.ventas}/30 ventas · ${x.ingresos}/2.000 €` }])),
+      nota: 'DAC7: la plataforma informa por cuenta y año natural cuando hay 30 o más ventas o 2.000 € o más. Lo fiscal lo decide tu gestor.',
+    },
+  };
+}
 function exportForClaude() {
-  const snap = agent.snapshot() || {}, bz = brain(), e2 = (v) => (Math.round(v * 100) / 100).toFixed(2);
+  const ex = exportExtra(), snap = { salud_datos: ex.salud_datos, ...(agent.snapshot() || {}), dinero: ex.dinero, impuestos: ex.impuestos }, bz = brain(), e2 = (v) => (Math.round(v * 100) / 100).toFixed(2);
   const months = monthRange().filter((mk) => { const p = parts(mk); return p.nSales || p.biz || p.pers || p.orders || mk === curMonth(); }).map((mk) => {
     const p = parts(mk);
     return `${mk}: ${p.nSales} ventas${p.noCost ? ` (${p.noCost} sin coste, no suman)` : ''} · beneficio ventas ${e2(p.profit)} € − gastos negocio ${e2(p.biz)} € = beneficio neto ${e2(p.net)} €` +
@@ -2112,7 +2326,8 @@ function exportForClaude() {
     return `${m.name} [${eff}${eff !== m.status ? ', marcado ' + m.status : ''}]: ${ss.length} ventas total, ${d30.length} en 30 días, precio medio ${ss.length ? e2(sum(ss.map((v) => n0(v.price))) / ss.length) + ' €' : '-'} (30 días: ${d30.length ? e2(sum(d30.map((v) => n0(v.price))) / d30.length) + ' €' : '-'}), coste ${costSrc(m) === 'por defecto' ? 'FALTA' : e2(costOf(m)) + ' € (' + costSrc(m) + ')'}, 1688 ${n0(m.unitPrice) ? e2(n0(m.unitPrice)) + ' €' : 'FALTA'}, peso ${n0(m.weight) ? n0(m.weight) + ' g' : 'FALTA'}, en casa ${n0(m.home)}, en camino ${n0(m.transit)}`;
   });
   const t = new Date(), fix = S0().fixLog || [];
-  return `OOQ LEDGER · export ${todayKey()} ${pad(t.getHours())}:${pad(t.getMinutes())}\n` +
+  const h = ex.salud_datos, health = `SALUD DE LOS DATOS · app ${APP_V}\nventas sin coste o reloj: ${h.ventas_sin_coste_o_reloj.n} · costes a mano que no cuadran: ${h.costes_a_mano_que_no_cuadran.n} · anuncios sin stock: ${h.anuncios_sin_stock.n} · ventas por enviar: ${h.ventas_por_enviar.n} · duplicados descartados: ${h.duplicados_descartados.length}\n`;
+  return `OOQ LEDGER · export ${todayKey()} ${pad(t.getHours())}:${pad(t.getMinutes())}\n` + health + 
     `Datos de mi negocio de relojes. "calculos", "st" (estado de stock) y "pedido_sugerido" los calcula la app. "e" = estado real (ganador solo con 1 venta o 2 ofertas). Dime los mejores movimientos de stock y números.\n\n` +
     `MESES (todos los meses con datos)\n${months.join('\n')}\n\nPOR RELOJ\n${perModel.join('\n')}\n` +
     (fix.length ? `\nCORRECCIONES DE DATOS (${S0().fixAt || ''}, estado final)\n${fix.join('\n')}\n` : '') +
@@ -2137,7 +2352,7 @@ function exportBackup() {
 
 /* ---------------- events ---------------- */
 const SAVE = { 'save-orphans': saveOrphans, 'save-sale': saveSale, 'save-order': saveOrder, 'save-receive': saveReceive, 'save-spend': saveSpend, 'save-income': saveIncome, 'save-model': saveModel, 'save-settings': saveSettings, 'save-bill': saveBill, 'save-goal': saveGoal,
-  'save-snap': saveSnap, 'save-withdraw': saveWithdraw, 'save-catchup': saveCatchup, 'save-newtest': saveNewTest, 'save-listing': saveListing, 'save-acc': saveAcc, 'save-plan': savePlan, 'save-debt': saveDebt };
+  'save-snap': saveSnap, 'save-withdraw': saveWithdraw, 'save-catchup': saveCatchup, 'save-newtest': saveNewTest, 'save-listing': saveListing, 'save-acc': saveAcc, 'save-plan': savePlan, 'save-debt': saveDebt, 'save-order-edit': saveOrderEdit };
 function setTab(v) { st.tab = v; lsSet('lg_tab', v); if (location.hash.slice(1) !== v) history.replaceState(null, '', '#' + v); window.scrollTo(0, 0); renderSoon(); }
 document.addEventListener('click', async (e) => {
   if (e.target === sheetEl) { closeSheet(); return; }
@@ -2168,6 +2383,9 @@ document.addEventListener('click', async (e) => {
     case 'model': openSheet('model', { id: b.dataset.id }); break;
     case 'receive': openSheet('receive', { id: b.dataset.id }); break;
     case 'order': openSheet('order', { id: b.dataset.id }); break;
+    case 'order-edit': openSheet('order-edit', { id: b.dataset.id }); break;
+    case 'sale-shipped': await db.patch(C.sales, b.dataset.id, { shipped: true, shippedAt: nowISO() }); toast('Marcado como enviado'); break;
+    case 'sale-extend': { const v = db.get(C.sales, b.dataset.id); if (v) { await db.patch(C.sales, v.id, { shipBy: shiftDay(v.shipBy || shiftDay(v.date, 7), 7), extended: n0(v.extended) + 1 }); toast('Plazo +7 días'); } break; }
     case 'theme': { const t = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = t; lsSet('lg_theme2', t); redrawSheet(); break; }
     case 'del-order': {
       const id = st.sheet.ctx.id, key = 'orders/' + id;
@@ -2182,7 +2400,7 @@ document.addEventListener('click', async (e) => {
     case 'anuncio-new': openSheet('anuncio-new', { id: b.dataset.id, acc: v }); break;
     case 'an-save': {
       const m = model(sv('an-m')), price = num(sv('an-price')); if (!m) { shErr('Elige el reloj.'); break; } if (isNaN(price) || price <= 0) { shErr('Pon el precio.'); break; }
-      await db.put(C.listings, { modelId: m.id, account: sv('an-acc'), price: r2(price), listedAt: nowISO(), status: 'live', snaps: [] });
+      await db.put(C.listings, { modelId: m.id, account: sv('an-acc'), price: r2(price), listedAt: nowISO(), status: 'live', snaps: [], ...styleOf('an') });
       if (isNaN(num(m.listPrice))) await db.patch(C.models, m.id, { listPrice: r2(price) });
       if (m.status === 'test' && !m.testStart) await db.patch(C.models, m.id, { testStart: nowISO() });
       closeSheet(); toast('Anuncio apuntado · ' + hhmm(nowISO())); break;
@@ -2582,6 +2800,28 @@ async function recalcAllOrders(log) {
     if (o.status === 'recibido' && al.pouch && o.pouches) await patchSettings({ pouchCost: al.pouch });
   }
 }
+// v13 (one time, from the export review of 21 Oct): cushion 50 €, sales made with 0 at home become reserved,
+// a typed cost that a sibling with the same 1688 price + weight contradicts takes the order-based one, every sale gets the cost of its box.
+async function migrate13() {
+  const cur = db.get(C.settings, 'settings'); if (!cur || n0(cur.migr) >= 13) return;
+  const log = [], t = todayKey();
+  if (!(n0(cur.cushion) > 0)) { await patchSettings({ cushion: 50 }); log.push('colchón: 0 → 50 €'); }
+  for (const v of L('sales').filter((x) => !x.cancelled && x.fromStock === false && !x.imported && !x.reserved && x.date >= shiftDay(t, -14))) {
+    const m = model(v.modelId); if (!m || n0(m.home) > 0 || !(n0(m.transit) > 0)) continue;
+    await db.patch(C.sales, v.id, { reserved: true, shipBy: shiftDay(v.date, 7) }); log.push(`${m.name}: venta del ${v.date} vendida sin stock → reservada (1 de las ${n0(m.transit)} que vienen), envío antes del ${shiftDay(v.date, 7)}`);
+  }
+  for (const w of costWarnings().filter((x) => x.sib)) {
+    const old = w.typed;
+    await db.patch(C.models, w.m.id, { landed: w.should, landedSrc: 'estimado', landedOld: old, landedNote: 'igual que ' + w.sib.name });
+    let n = 0; for (const v of L('sales').filter((x) => x.modelId === w.m.id && !x.cancelled && !x.costManual && Math.abs(n0(x.watchCost !== undefined ? x.watchCost : x.cost) - old) < 0.005)) { const e = n0(v.extra); await db.patch(C.sales, v.id, { watchCost: w.should, cost: r2(w.should + e), profit: r2(n0(v.price) - w.should - e), costFrom: 'igual que ' + w.sib.name }); n++; }
+    log.push(`${w.m.name}: coste ${old} € → ${w.should} € (${w.why})${n ? ` · ${n} venta${n === 1 ? '' : 's'} recalculada${n === 1 ? '' : 's'}` : ''}`);
+  }
+  const before = Object.fromEntries(L('sales').map((v) => [v.id, n0(v.watchCost !== undefined ? v.watchCost : v.cost)]));
+  await relotAll();
+  const ch = L('sales').filter((v) => Math.abs(n0(v.watchCost !== undefined ? v.watchCost : v.cost) - (before[v.id] || 0)) >= 0.005);
+  for (const v of ch) log.push(`venta ${v.date} ${v.modelName}: coste ${r2(before[v.id] || 0)} → ${r2(n0(v.watchCost))} € (${v.costFrom || 'su pedido'})`);
+  await patchSettings({ migr: 13, fixLog: [...(cur.fixLog || []), ...log], fixAt: t });
+}
 async function migrate12() {
   const cur = db.get(C.settings, 'settings'); if (!cur || n0(cur.migr) >= 12) return;
   const log = [];
@@ -2646,6 +2886,7 @@ async function boot() {
   await migrate10().catch((e) => console.warn('migrate10', e));
   await migrate11().catch((e) => console.warn('migrate11', e));
   await migrate12().catch((e) => console.warn('migrate12', e));
+  await migrate13().catch((e) => console.warn('migrate13', e));
   shell(); render();
   const ta = $('#comp-text'), fi = $('#comp-file');
   ta.addEventListener('input', () => { ta.style.height = ''; ta.style.height = Math.min(140, ta.scrollHeight) + 'px'; });

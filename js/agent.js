@@ -162,7 +162,7 @@ export function createAgent(api) {
     const srcOf = api.costSrc || ((m) => (isNaN(parseFloat(m.landed)) ? 'por defecto' : 'puesto a mano'));
     const orders = L('orders').filter((o) => !o.draft);
     const lf = api.landedFromOrder || (() => null);
-    const etaSrc = (o) => (o.eta ? 'fijada a mano' : `calculada: ${o.date} + ${(o.lane || 'ddp').toUpperCase()} ${ld[o.lane === 'dhl' || o.lane === 'dua' ? 'dua' : 'ddp']} días`);
+    const etaSrc = (o) => (o.eta ? 'fijada a mano' : `calculada: ${o.date} + ${o.lane === 'ali' ? 'AliExpress' : (o.lane === 'dhl' ? 'dua' : o.lane || 'ddp').toUpperCase()} ${ld[o.lane === 'dhl' || o.lane === 'dua' ? 'dua' : o.lane === 'ali' ? 'ali' : 'ddp']} días`);
     const plan = bz.plan, lane = (k) => plan.lines.filter((l) => l.lane === k).map((l) => ({ reloj: l.m.name, uds: l.qty, coste: r(l.cost) }));
     const nothing = plan.lines.length ? undefined : owed > 0 ? `nada: primero la deuda (${r(owed)} €)` : plan.skipped.length ? `nada: falta caja (gastable ${r(plan.cash)} €)` : 'nada: ningún ganador se queda sin stock antes de que llegue un DDP';
     const allSales = L('sales').filter((v) => !v.cancelled), bySale = (m) => allSales.filter((v) => v.modelId === m.id);
@@ -195,30 +195,35 @@ export function createAgent(api) {
         const pr = bySale(x.m), lo = x.m.landedOld;
         return {
           reloj: x.m.name, id: x.m.id, e: x.m.status, marcado: x.m.marked !== x.m.status ? x.m.marked : undefined, st: x.status,
-          casa: x.home, camino: x.transit, dia: r(x.rate), ritmo_base: x.d.basis === 'hasta-rotura' ? `28 días con stock hasta el ${x.d.segEnd} (luego se agotó)` : x.d.basis === 'con-stock' ? 'solo días con stock (antes y después de agotarse)' : x.d.total ? 'últimos 28 días' : undefined,
-          v7: x.d.last7, v7prev: x.d.prev7, ventas_28d_con_stock: x.d.n28, dias: r(x.coverAll, 0), pedir_antes_de: x.orderBy || undefined,
+          casa: x.home, camino: x.transit, reservado: x.reserved || 0, disponible: x.available,
+          dia: x.d.noPace ? 'sin ritmo' : r(x.rate),
+          ritmo_base: x.d.days ? `${x.d.n28} ventas en sus últimos ${x.d.days} días con stock (${x.d.segStart} → ${x.d.segEnd}${x.d.span > x.d.days ? `, salta ${x.d.span - x.d.days} días sin stock` : ''})${x.d.noPace ? ' → menos de 4: sin ritmo, no se calcula pedido' : ''}` : 'sin ventas con stock',
+          semanas: x.d.weeks, v7: x.d.last7, v7prev: x.d.prev7, ventas_28d_con_stock: x.d.n28, dias: r(x.coverAll, 0), pedir_antes_de: x.orderBy || undefined,
+          ...(api.watchExtra ? api.watchExtra(x.m.id) : {}),
           coste: srcOf(x.m) === 'por defecto' ? 'FALTA' : r(x.cost), coste_fuente: srcOf(x.m), coste_antes: lo !== undefined ? r(lo) : undefined,
           precio_1688: n0(x.m.unitPrice) || 'falta', peso_g: n0(x.m.weight) || 'falta',
           ventas_total: pr.length, precio_medio: avg(pr), precio_medio_30d: avg(pr.filter((v) => v.date >= d30)),
           benef: r(x.unitProfit), benef_con_boost: x.nCost ? r(x.unitProfit - boostPer) : undefined,
           benef_fuente: x.nCost ? `media de las últimas ${x.upN} ventas con coste (de ${pr.length}); con boost resta ${r(boostPer)} €/venta (boosts totales ÷ ventas)` : x.upPrice ? `estimado: vendiendo a ${r(x.upPrice)} €` : 'sin precio de venta',
-          llega: x.arrivals.map((a) => { const o = orders.find((z) => z.id === a.id); return { uds: a.qty, via: a.lane === 'dhl' || a.lane === 'dua' ? 'DUA' : 'DDP', eta: a.eta, eta_fuente: o ? etaSrc(o) : undefined }; }),
+          llega: x.arrivals.map((a) => { const o = orders.find((z) => z.id === a.id); return { uds: a.qty, via: a.lane === 'dhl' || a.lane === 'dua' ? 'DUA' : a.lane === 'ali' ? 'AliExpress' : 'DDP', eta: a.eta, eta_fuente: o ? etaSrc(o) : undefined }; }),
           llego: x.arrived || undefined, nota: x.why || undefined,
         };
       }),
       archivados: L('models').filter((m) => m.status === 'descartado' && !n0(m.home) && !/sin especificar/i.test(m.name)).map((m) => `${m.name} (${bySale(m).length} ventas, 0 en casa)`),
-      plazos: { ddp: { dias: ld.ddp, fuente: ld.ddpSrc }, dua: { dias: ld.dua, fuente: ld.duaSrc } },
+      plazos: { ddp: { dias: ld.ddp, fuente: ld.ddpSrc }, dua: { dias: ld.dua, fuente: ld.duaSrc }, aliexpress: { dias: ld.ali, fuente: ld.aliSrc } },
       plan_de_pedidos: (() => { const pl = api.plan ? api.plan() : null; if (!pl) return undefined; return {
         como: `automático: por familia (Watch 1 = golden/silver/bronze), ritmo solo de días con stock, simula día a día stock y dinero; pide cuando lo que tienes + lo que viene se acabaría antes de que llegue un pedido (${pl.lead} días) + colchón`,
-        proximos: pl.orders.map((o) => ({ familia: o.family, fecha: o.date, hoy: o.now || undefined, llega: o.arrives, uds: o.qty, reparto: o.split.map((p) => `${p.qty} ${p.m.name}`), coste: r(o.cost), caja_ese_dia: r(o.cashThen), alcanza: o.ok, hay_caja_el: o.ok ? undefined : o.cashDate, porque: `se acaba el ${o.out}` })),
-        familias: pl.fams.map((F) => ({ familia: F.name, en_casa: F.home, en_camino: F.transit, ritmo_dia_con_stock: r(F.R), se_acaba: F.dry || `+90 días`, hueco_sin_stock: F.gap && F.gap.days ? `${F.gap.from} → ${F.gap.to} (${F.gap.days} días)` : undefined, estado: F.status })),
-        caja_proyectada: { en_30_dias: r(pl.in30), punto_mas_bajo: `${r(pl.low.amount)} € el ${pl.low.date}` },
-        resumen: pl.orders.length ? (pl.orders[0].now ? `pide hoy ${pl.orders[0].qty} de ${pl.orders[0].family}` : `nada hasta el ${pl.orders[0].date} (${pl.orders[0].family})`) : 'nada que pedir: todo cubierto',
+        reglas: 'sin ritmo (<4 ventas en 28 días con stock) = no se sugiere pedido; ganador nuevo sin nada en casa ni en camino = primer pedido 15 + 5 por venta/oferta extra del test (máx. 40); un pedido nunca rompe el colchón: si no hay caja el día que toca, se mueve al primer día que la hay; temporada: Black Friday ×1,3, 1–22 dic ×1,8 (lo de Navidad tiene que llegar antes del 12 dic), 7–31 ene ×0,7',
+        proximos: pl.orders.map((o) => ({ familia: o.family, fecha: o.date, tocaba: o.due !== o.date ? o.due : undefined, hoy: o.now || undefined, espera_caja: o.waitCash || undefined, primer_pedido: o.first || undefined, llega: o.arrives, uds: o.qty, parcial: o.partial ? `${o.qty} de ${o.full}: la caja no da para todo sin romper el colchón` : undefined, reparto: o.split.map((p) => `${p.qty} ${p.m.name}`), coste: r(o.cost), caja_ese_dia: r(o.cashThen), alcanza: o.ok, hay_caja_el: o.ok ? undefined : o.cashDate || 'no en 90 días', navidad: o.xmas || undefined, porque: o.first ? 'ganador nuevo' : `se acaba el ${o.out}` })),
+        familias: pl.fams.map((F) => ({ familia: F.name, en_casa: F.home, en_camino: F.transit, reservado: F.reserved || undefined, ritmo_dia_con_stock: F.R > 0 ? r(F.R) : 'sin ritmo', se_acaba: F.R > 0 ? F.dry || `+90 días` : undefined, hueco_sin_stock: F.gap && F.gap.days ? `${F.gap.from} → ${F.gap.to} (${F.gap.days} días)` : undefined, estado: F.status, nota: F.note })),
+        caja_proyectada: { real_sin_pedidos_nuevos: { en_30_dias: r(pl.in30real), punto_mas_bajo: `${r(pl.low0.amount)} € el ${pl.low0.date}` }, con_sugerencias: { en_30_dias: r(pl.in30), punto_mas_bajo: `${r(pl.low.amount)} € el ${pl.low.date}` }, colchon: r(pl.cushion) },
+        resumen: pl.orders.length ? (pl.orders[0].now ? `pide hoy ${pl.orders[0].qty} de ${pl.orders[0].family}` : pl.orders[0].waitCash ? `${pl.orders[0].family}: tocaba el ${pl.orders[0].due}, pide el ${pl.orders[0].date} cuando haya caja` : `nada hasta el ${pl.orders[0].date} (${pl.orders[0].family})`) : 'nada que pedir: todo cubierto',
       }; })(),
-      tests: bz.tests.map((t) => ({ reloj: t.m.name, id: t.m.id, etapa: t.stage, h: r(t.hours, 0), vistas: t.views, favs: t.favs, ofertas: t.offers, mejor: t.best || undefined, vend: t.sold || undefined, casa: t.home, camino: t.transit || undefined, accion: t.act || t.why })),
+      tests: bz.tests.map((t) => ({ reloj: t.m.name, id: t.m.id, etapa: t.stage, h: r(t.hours, 0), vistas: t.views, favs: t.favs, ofertas: t.offers, mejor_oferta: t.best || undefined, vend: t.sold || undefined, uds: t.home + t.transit, casa: t.home, camino: t.transit || undefined, coste: r(t.cost), veredicto_48h: t.hours >= 48 ? t.stage : `a las 48h (faltan ${Math.max(0, Math.round(48 - t.hours))}h)`, accion: t.act || t.why })),
+      tests_acierto: api.testHit ? api.testHit() : undefined,
       ganador_ref: { favs: r(bz.bench.fav), vistas_dia: r(bz.bench.vpd, 0), ofertas_100: r(bz.bench.opv, 1), fuente: bz.bench.learned ? `medido en ${bz.bench.n} stats de tus ganadores` : 'por defecto (aún no medido con tus ganadores)' },
-      tests_ritmo: { semana: bz.tp.perWeek, a_la_vez: bz.benchN, corriendo: bz.running, faltan_ganadores: bz.tp.winnersNeeded },
-      cuentas: bz.acc.accs.map((a) => ({ cuenta: a.name, estado: a.status, riesgo_anuncios: a.status === 'activa' ? a.health : undefined, activos: a.live.length, ventas_7d: a.s7, retiradas_30d: a.rem30 })),
+      tests_ritmo: { semana: bz.tp.perWeek, a_la_vez: bz.benchN, corriendo: bz.running, faltan_ganadores: bz.tp.winnersNeeded === null ? 'sin calcular' : bz.tp.winnersNeeded, ganadores_necesarios: bz.tp.winnersTotal, ganadores_activos: bz.tp.liveWinners, formula: bz.tp.formula },
+      cuentas: bz.acc.accs.map((a) => ({ cuenta: a.name, estado: a.status, riesgo_anuncios: a.status === 'activa' ? a.health : undefined, activos: a.live.length, ventas_7d: a.s7, ventas_30d: a.s30, retiradas_30d: a.rem30, ...(api.accExtra ? api.accExtra(a.name) : {}) })),
       ventas_recientes: allSales.slice().sort((a, b) => (b.at || b.date).localeCompare(a.at || a.date)).slice(0, 8).map((v) => ({ fecha: v.date, reloj: (L('models').find((m) => m.id === v.modelId) || {}).name || v.modelName, precio: r(n0(v.price)), coste: v.costMissing ? 'FALTA' : r(n0(v.watchCost !== undefined ? v.watchCost : v.cost - n0(v.extra))), bolsita: r(n0(v.extra)) || undefined, beneficio: v.costMissing ? 'FALTA' : r(typeof v.profit === 'number' ? v.profit : n0(v.price) - n0(v.cost)), cuenta: v.account, cuenta_aprox: v.accountEstimated || undefined })),
       ventas_sin_reloj: allSales.filter((v) => !L('models').some((m) => m.id === v.modelId)).map((v) => `${v.date} ${v.modelName} ${v.price}€`),
       ventas_por_arreglar: toFix.map((v) => `${v.date} ${(L('models').find((m) => m.id === v.modelId) || {}).name || v.modelName} ${v.price}€ ${v.account || ''}${v.costMissing ? ' · coste FALTA' : ''}`),
@@ -233,13 +238,15 @@ export function createAgent(api) {
         const alloc = used.every((u) => u.c !== null) ? r(used.reduce((t, u) => t + u.c * u.qty, 0) + pouchTot) : undefined;
         const stale = used.filter((u) => u.c !== null && u.calc !== null && Math.abs(u.c - u.calc) >= 0.01).map((u) => `${u.name} usa ${r(u.c)} pero el pedido da ${r(u.calc)}`);
         return {
-          fecha: o.date, via: o.lane === 'dhl' || o.lane === 'dua' ? 'DUA' : 'DDP', estado: o.status, eta: o.status !== 'recibido' ? (o.eta || undefined) : undefined, recibido: o.receivedDate,
+          proveedor: ({ ali: 'AliExpress', otro: 'otro' })[o.supplier] || '1688', via: o.lane === 'dhl' || o.lane === 'dua' ? 'DUA' : o.lane === 'ali' ? 'AliExpress' : 'DDP', estado: o.status,
+          pagado: o.date, enviado: o.shippedDate || undefined, recibido: o.receivedDate, eta: o.status !== 'recibido' ? (api.etaOf ? api.etaOf(o) : o.eta || undefined) : undefined, plazo_real_dias: o.receivedDate ? Math.round((Date.parse(o.receivedDate) - Date.parse(o.date)) / 86400000) : undefined,
+          reservado_para_ventas: api.reservedFor ? api.reservedFor(o) : undefined, iva_y_cargos: n0(o.vat) ? r(n0(o.vat)) : undefined, fecha: o.date,
           relojes: (o.lines || []).map((l) => `${l.qty}× ${l.name} a ${r(n0(l.unit))}`), coste_relojes: r(watches), bolsitas: pq ? `${pq} uds · ${r(pg)} €` : undefined,
-          envio: r(n0(o.shipping)), impuestos_al_llegar: r(n0(o.dhl)), total: r(watches + pg + n0(o.shipping) + n0(o.dhl)),
+          envio: r(n0(o.shipping)), impuestos_al_llegar: r(n0(o.dhl)), total: r(watches + pg + n0(o.shipping) + n0(o.vat) + n0(o.dhl)),
           pagado_al_pedir: r(n0(o.paid)), pagado_despues: r(pays), debe: r(n0(o.owed)),
           reparto_envio: al ? (al.byW ? 'por peso' : 'por valor (faltan pesos)') : 'faltan precios 1688', coste_ud: per, coste_fuente: al ? al.src : undefined,
           bolsitas_con_envio: pq ? r(pouchTot) : undefined,
-          comprobacion: alloc !== undefined ? (() => { const tot = r(watches + pg + n0(o.shipping) + n0(o.dhl)), dif = r(alloc - tot); return `Σ coste_ud × uds + bolsitas ${pouchTot} = ${alloc} € · total del pedido ${tot} € · diferencia ${dif} €${Math.abs(dif) < 0.3 ? ' (redondeo a céntimos por unidad)' : ''}${(o.lane === 'dhl' || o.lane === 'dua') && o.status !== 'recibido' ? ' · incluye IVA 21% estimado (DUA)' : ''}`; })() : 'falta el coste de algún reloj',
+          comprobacion: alloc !== undefined ? (() => { const tot = r(watches + pg + n0(o.shipping) + n0(o.vat) + n0(o.dhl)), dif = r(alloc - tot); return `Σ coste_ud × uds + bolsitas ${pouchTot} = ${alloc} € · total del pedido ${tot} € · diferencia ${dif} €${Math.abs(dif) < 0.3 ? ' (redondeo a céntimos por unidad)' : ''}${(o.lane === 'dhl' || o.lane === 'dua') && o.status !== 'recibido' ? ' · incluye IVA 21% estimado (DUA)' : ''}`; })() : 'falta el coste de algún reloj',
           coste_desactualizado: stale.length ? stale : undefined,
         };
       }),

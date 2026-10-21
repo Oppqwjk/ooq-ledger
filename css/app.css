@@ -729,3 +729,5 @@ button.hy-row:hover { background: var(--head); }
 .g-sub { font-size: 12.5px; color: var(--muted); line-height: 1.45; }
 .g-sub .auto { color: var(--faint); }
 .g-x .del { margin-top: -2px; }
+.alert.bad { background: var(--neg-cell); } .alert.bad b { color: var(--neg); }
+.alert .btnrow { margin-top: 6px; } .alert .btnrow .btn-o { padding: 6px 12px; font-size: 12.5px; }
