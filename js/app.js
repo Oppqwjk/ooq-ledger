@@ -47,7 +47,7 @@ const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
 
 const STATUS = { ganador: 'Ganador', test: 'Test', espera: 'En espera', descartado: 'Descartado' };
 const SORDER = { ganador: 0, test: 1, espera: 2, descartado: 3 };
-const APP_V = 'v32';
+const APP_V = 'v33';
 const CATS = { personal: ['Comida', 'Ocio', 'Ropa', 'Transporte', 'Móvil y subs', 'Ahorro / retiro personal', 'Otros'], negocio: ['Boost Vinted', 'Envíos', 'Fotos y material', 'Otros negocio'] };
 // what a goal can measure; everything except "manual" and "task" is read from your data automatically
 const METRICS = {
@@ -852,7 +852,7 @@ function riskAlerts() {
   for (const r of reservedSales()) {
     const nm = esc(r.m ? r.m.name : r.v.modelName);
     if (r.filled) items.push(`<div class="alert"><b>Envía ya: ${nm}</b><span>vendido el ${shortDate(r.v.date)} a ${esc(r.v.account || '')} · ya está en casa · plazo ${shortDate(r.by)}</span><span class="btnrow"><button class="btn-o" data-a="sale-shipped" data-id="${esc(r.v.id)}">Enviado</button></span></div>`);
-    else items.push(`<div class="alert ${r.late ? 'bad' : ''}"><b>${r.late ? 'No llega a tiempo' : 'Reservado'}: ${nm}</b><span>vendido el ${shortDate(r.v.date)} sin stock · ${r.eta ? 'llega ~' + shortDate(r.eta) : 'no hay nada pedido'} · plazo de envío ${shortDate(r.by)}${r.late ? ' → pide prórroga al comprador' : ''}</span><span class="btnrow"><button class="btn-o" data-a="sale-extend" data-id="${esc(r.v.id)}">Prórroga +7 días</button></span></div>`);
+    else items.push(`<div class="alert ${r.late ? 'bad' : ''}"><b>${r.late ? 'No llega a tiempo' : 'Reservado'}: ${nm}</b><span>vendido el ${shortDate(r.v.date)} sin stock · ${r.eta ? 'llega ~' + shortDate(r.eta) : 'no hay nada pedido'} · plazo de envío ${shortDate(r.by)}${r.late ? ' → pide prórroga al comprador' : ''}</span><span class="btnrow"><button class="btn-o" data-a="sale-shipped-done" data-id="${esc(r.v.id)}">Ya lo envié</button><button class="btn-o" data-a="sale-extend" data-id="${esc(r.v.id)}">Prórroga +7 días</button></span></div>`);
   }
   const ns = listingsNoStock();
   const sin = ns.filter((x) => x.kind === 'sin'), cam = ns.filter((x) => x.kind === 'camino');
@@ -1571,6 +1571,7 @@ function sheetHTML() {
       <div class="field"><label for="oe-lane">Vía</label><select id="oe-lane">${[['ddp', 'DDP (impuestos incluidos)'], ['dua', 'DUA (impuestos al llegar)'], ['ali', 'AliExpress']].map(([v, l]) => `<option value="${v}"${((o.lane === 'dhl' ? 'dua' : o.lane === 'otro' ? 'ddp' : o.lane) || 'ddp') === v ? ' selected' : ''}>${l}</option>`).join('')}</select></div></div>
       <div class="fields2">${fld('oe-ship', 'Envío (€)', n0(o.shipping))}${fld('oe-vat', 'IVA y otros cargos pagados (€)', n0(o.vat))}</div>
       <div class="fields2">${dateFld('oe-date', o.date, 'Pedido (pagado)')}<div class="field"><label for="oe-sent">Enviado por el proveedor</label><input id="oe-sent" type="date" value="${esc(o.shippedDate || '')}"></div></div>
+      ${o.status !== 'recibido' ? `<div class="field"><label for="oe-eta">Llega (si lo sabes por el seguimiento)</label><input id="oe-eta" type="date" value="${esc(o.eta || '')}"></div>` : ''}
       ${o.status === 'recibido' ? `<div class="fields2">${dateFld('oe-rec', o.receivedDate, 'Recibido')}${fld('oe-dhl', 'Impuestos al llegar (DUA, €)', n0(o.dhl))}</div>` : ''}
       <div class="hint">Total del pedido ahora: ${eur(n0(o.goods) + n0(o.shipping) + n0(o.vat) + n0(o.dhl))}. Al guardar se recalcula el coste por reloj y el de las ventas que salieron de este pedido.</div>
       <div class="err" id="sh-err"></div><button class="primary" data-a="save-order-edit">Guardar</button>`;
@@ -2031,6 +2032,7 @@ async function saveOrderEdit() {
   if (!validDate(date)) return shErr('Pon una fecha válida.');
   const lane = ['dua', 'ali'].includes(sv('oe-lane')) ? sv('oe-lane') : 'ddp';
   const p = { supplier: sv('oe-sup') || '1688', lane, shipping: ship, vat, date, shippedDate: /^\d{4}-\d{2}-\d{2}$/.test(sent) ? sent : null };
+  if (o.status !== 'recibido') { const e = sv('oe-eta'); p.eta = validDate(e) ? e : null; }
   // what you paid when ordering = goods + shipping + VAT − what you still owe − what you paid later
   p.paid = r2(n0(o.goods) + ship + vat - n0(o.owed) - sum(payments(o).map((x) => n0(x.amount))));
   if (o.status === 'recibido') { const rd = sv('oe-rec'); if (validDate(rd)) p.receivedDate = rd; p.dhl = r2(Math.max(0, n0(sv('oe-dhl')))); }
@@ -2385,6 +2387,8 @@ document.addEventListener('click', async (e) => {
     case 'order': openSheet('order', { id: b.dataset.id }); break;
     case 'order-edit': openSheet('order-edit', { id: b.dataset.id }); break;
     case 'sale-shipped': await db.patch(C.sales, b.dataset.id, { shipped: true, shippedAt: nowISO() }); toast('Marcado como enviado'); break;
+    // shipped from a unit you had at home: it no longer waits for the box (the box keeps all its units)
+    case 'sale-shipped-done': await db.patch(C.sales, b.dataset.id, { shipped: true, shippedAt: nowISO(), reserved: false, fromStock: true }); toast('Enviado · ya no se descuenta de lo que llega'); break;
     case 'sale-extend': { const v = db.get(C.sales, b.dataset.id); if (v) { await db.patch(C.sales, v.id, { shipBy: shiftDay(v.shipBy || shiftDay(v.date, 7), 7), extended: n0(v.extended) + 1 }); toast('Plazo +7 días'); } break; }
     case 'theme': { const t = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = t; lsSet('lg_theme2', t); redrawSheet(); break; }
     case 'del-order': {
