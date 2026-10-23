@@ -47,7 +47,7 @@ const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
 
 const STATUS = { ganador: 'Ganador', test: 'Test', espera: 'En espera', descartado: 'Descartado' };
 const SORDER = { ganador: 0, test: 1, espera: 2, descartado: 3 };
-const APP_V = 'v33';
+const APP_V = 'v34';
 const CATS = { personal: ['Comida', 'Ocio', 'Ropa', 'Transporte', 'Móvil y subs', 'Ahorro / retiro personal', 'Otros'], negocio: ['Boost Vinted', 'Envíos', 'Fotos y material', 'Otros negocio'] };
 // what a goal can measure; everything except "manual" and "task" is read from your data automatically
 const METRICS = {
@@ -93,6 +93,7 @@ const pouchCost = () => {
   const s = S0(); return n0(s.pouchCost !== undefined ? s.pouchCost : s.perSale);
 };
 const pouches = () => n0(S0().pouches);
+const boostCost = () => (S0().boostCost === undefined ? 1.5 : n0(S0().boostCost)); // a Vinted boost: its real cost goes into the sale it helped close
 async function patchSettings(p) { await db.put(C.settings, { ...(db.get(C.settings, 'settings') || DEF), ...p, id: 'settings' }); }
 const profitOf = (s) => (s.costMissing ? 0 : typeof s.profit === 'number' ? s.profit : n0(s.price) - n0(s.cost)); // no real cost → left out of profit until you fill it in
 const on = (arr, pre, f = 'date') => arr.filter((x) => x[f] && x[f].startsWith(pre));
@@ -235,7 +236,7 @@ function brain() {
   return brainCache;
 }
 const stockOf = (id) => brain().stocks.find((s) => s.m.id === id) || null;
-const agent = createAgent({ db, C, L, model, S0, brain, fresh: () => { brainCache = null; }, costOf, todayKey, nowISO, patchSettings, pouches, pouchCost, cashNow, bankNow, vintedBalance, pendingVinted, owedTotal, spendable, pendingBills, costSrc, landedFromOrder, plan: () => plan(), listingsData: () => listingsData(), watchExtra: (id) => watchExtra(id), accExtra: (a) => accExtra(a), testHit: () => testHit(), reservedFor: (o) => reservedFor(o), etaOf: (o) => B.etaOf(o, brain().lead), billsDue: () => L('bills').filter((b) => b.month <= curMonth() && !b.paid).map((b) => `${b.month} ${b.concept} ${n0(b.amount)} €`) });
+const agent = createAgent({ db, C, L, model, S0, brain, fresh: () => { brainCache = null; }, costOf, todayKey, nowISO, patchSettings, pouches, pouchCost, cashNow, bankNow, vintedBalance, pendingVinted, owedTotal, spendable, pendingBills, costSrc, landedFromOrder, plan: () => plan(), listingsData: () => listingsData(), boostCost: () => boostCost(), watchExtra: (id) => watchExtra(id), accExtra: (a) => accExtra(a), testHit: () => testHit(), reservedFor: (o) => reservedFor(o), etaOf: (o) => B.etaOf(o, brain().lead), billsDue: () => L('bills').filter((b) => b.month <= curMonth() && !b.paid).map((b) => `${b.month} ${b.concept} ${n0(b.amount)} €`) });
 const SST = { 'en camino': ['En camino', 'mut'], 'no repone': ['No se repone', 'mut'], enfria: ['Se enfría', 'warn'], rotura: ['Sin stock', 'neg'], urgente: ['Urgente', 'neg'], pedir: ['Pedir', 'warn'], ok: ['OK', 'pos'], exceso: ['Exceso', 'warn'], parado: ['Parado', 'warn'], liquidar: ['Liquidar', 'warn'], lento: ['Lento', 'mut'], 'sin datos': ['Sin ventas', 'mut'], fuera: ['Fuera', 'mut'] };
 const days1 = (v) => (v === Infinity || isNaN(v) ? '∞' : v >= 100 ? '99+' : String(Math.floor(v)));
 const rate1 = (v) => (v ? v.toFixed(v < 1 ? 2 : 1).replace('.', ',') : '0');
@@ -427,7 +428,7 @@ function monthTable(mk) {
     ${tr('Gastos negocio', money(-p.biz))}
     ${tr('Gastos personales', money(-p.pers))}
     ${tr('Flujo del banco', money(p.flow, true), 'tot')}
-    ${tr('Beneficio de ventas', money(p.profit, true) + '<span class="sub">venta − coste del reloj − bolsita</span>')}
+    ${tr('Beneficio de ventas', money(p.profit, true) + '<span class="sub">venta − coste del reloj − bolsita − boost</span>')}
     ${p.biz ? tr('− Gastos negocio', money(-p.biz)) : ''}
     ${tr('Beneficio neto', money(p.net, true), 'tot2')}
     <tr><th>Meta ${eur(g)}</th><td class="n barcell">${pbar(p.net / g)}<span>${Math.max(0, Math.round(p.net / g * 100))}%</span></td></tr>
@@ -908,7 +909,7 @@ function viewToday() {
   ].sort((x, y) => String(y.at).localeCompare(String(x.at))).slice(0, 8);
   const log = ev.length ? ev.map((e) => `<div class="hy-row"><span class="hy-ic ${e.k}"></span><span class="hy-t"><b>${esc(e.t)}</b><span class="mut">${shortDate(String(e.at).slice(0, 10))} · ${esc(e.s)}</span></span><b class="hy-a ${e.v < 0 ? 'neg' : 'pos'}">${eur(e.v, true)}</b></div>`).join('') : empty('Aún no hay movimientos.');
   return `<div class="hy">${hero}${money}
-    <div class="hy-actions"><button class="btn-g" data-a="add" data-mode="venta">+ Venta</button><button class="btn-o" data-a="add" data-mode="pedido">+ Pedido</button><button class="btn-o" data-a="add" data-mode="gasto">+ Gasto</button></div>
+    <div class="hy-actions"><button class="btn-g" data-a="add" data-mode="venta">+ Venta</button><button class="btn-o" data-a="add" data-mode="pedido">+ Pedido</button><button class="btn-o" data-a="add" data-mode="gasto">+ Gasto</button><button class="btn-o" data-a="boostwaste">+ Boost sin venta</button></div>
     <div class="g2"><div class="col">${panel('Hoy toca', todo)}${panel('En camino', `<div class="hy-list">${way}</div>`)}</div>
     <div class="col">${todayGoals()}${panel('Últimos movimientos', `<div class="hy-list">${log}</div>`, '<button class="lnk" data-a="tab" data-v="gastos">Ver todo</button>')}
     <button class="hy-claude" data-a="export-ai"><b>Copiar para Claude</b><span>Pega el export en tu proyecto y te digo el mejor movimiento</span></button></div></div></div>`;
@@ -1057,12 +1058,13 @@ function watchPicker(id, sel, ms) {
 const pickModels = () => sortedModels().filter((m) => m.status !== 'descartado' || n0(m.home) > 0).sort((a, b) => (n0(b.home) > 0) - (n0(a.home) > 0));
 
 /* ================= one way to record a sale (from + Venta or from a listing) ================= */
-async function recordSale({ m, price, cost, acc, date, pouch, listing, views, likes, soldAt }) {
-  const dec = n0(m.home) > 0, extra = pouch ? pouchCost() : 0, pouchFromStock = pouch && pouches() > 0, at = soldAt || nowISO();
+async function recordSale({ m, price, cost, acc, date, pouch, boost, listing, views, likes, soldAt }) {
+  const bst = boost ? boostCost() : 0;
+  const dec = n0(m.home) > 0, extra = (pouch ? pouchCost() : 0) + bst, pouchFromStock = pouch && pouches() > 0, at = soldAt || nowISO();
   const lst = listing || L('listings').filter((l) => l.modelId === m.id && l.account === acc && l.status === 'live').sort((a, b) => a.listedAt.localeCompare(b.listedAt))[0] || null;
   const c = isNaN(cost) ? num(m.landed) : cost, miss = isNaN(c), manual = !isNaN(cost) && !isNaN(num(m.landed)) && Math.abs(cost - num(m.landed)) >= 0.005;
   // nothing at home: the unit comes from what's on the way and the buyer waits → reserved, with Vinted's 7-day ship deadline
-  const sale = await db.put(C.sales, { date, at, modelId: m.id, modelName: m.name, price: r2(price), cost: miss ? 0 : r2(c + extra), watchCost: miss ? 0 : r2(c), extra: r2(extra), profit: miss ? null : r2(price - c - extra), costMissing: miss || undefined, costManual: manual || undefined, account: acc, fromStock: dec, reserved: !dec || undefined, shipBy: shiftDay(date, 7), pouch: !!pouch, pouchFromStock, listingId: lst ? lst.id : null, released: false });
+  const sale = await db.put(C.sales, { date, at, modelId: m.id, modelName: m.name, price: r2(price), cost: miss ? 0 : r2(c + extra), watchCost: miss ? 0 : r2(c), extra: r2(extra), profit: miss ? null : r2(price - c - extra), costMissing: miss || undefined, costManual: manual || undefined, boost: bst || undefined, account: acc, fromStock: dec, reserved: !dec || undefined, shipBy: shiftDay(date, 7), pouch: !!pouch, pouchFromStock, listingId: lst ? lst.id : null, released: false });
   if (lst) {
     const last = (lst.snaps || []).slice().sort((a, b) => b.at.localeCompare(a.at))[0] || {};
     const v = isNaN(views) ? n0(last.views) || null : views, f = isNaN(likes) ? (last.views ? n0(last.favs) : null) : likes;
@@ -1158,11 +1160,12 @@ function anuncioSheet(ctx) {
   if (l.status === 'sold') return head('ANUNCIO VENDIDO') + top + `<table class="xl"><tbody>${tr('Vendido', whenTxt(l.soldAt) + ' · ' + eur(n0(l.soldPrice)))}${tr('Tardó', dur(n0(l.hoursToSell)))}${tr('Vistas al vender', l.viewsAtSale ?? '—')}${tr('Likes al vender', l.likesAtSale ?? '—')}</tbody></table>`;
   return head('ANUNCIO') + top +
     `<div class="eyebrow">Stats de ahora</div><div class="fields3">${fld('an-v', 'Vistas', s ? n0(s.views) : '', 'inputmode="numeric"')}${fld('an-f', 'Likes', s ? n0(s.favs) : '', 'inputmode="numeric"')}${fld('an-o', 'Ofertas', s ? n0(s.offers) : '', 'inputmode="numeric"')}</div>
-    <button class="btn-o" data-a="an-stats">Guardar stats</button>
+    <button class="btn-o" data-a="an-stats">Guardar stats</button><button class="btn-o" data-a="boostwaste" data-id="${esc(l.id)}">Boost sin venta (${eur(boostCost())})</button>
     ${styleFields('ae', l)}
     <div class="sold-box"><div class="eyebrow">¿Se ha vendido?</div><div class="fields2">${fld('an-p', 'Vendido por (€)', String(n0(l.price)).replace('.', ','))}<div class="field"><label for="an-at">Cuándo</label><input id="an-at" type="datetime-local" value="${(() => { const d = new Date(); return dayKey(d) + 'T' + hhmm(d.toISOString()); })()}"></div></div>
     <div class="fields2">${fld('an-sv', 'Vistas al venderse', s ? n0(s.views) : '', 'inputmode="numeric"')}${fld('an-sf', 'Likes al venderse', s ? n0(s.favs) : '', 'inputmode="numeric"')}</div>
     <label class="check"><input type="checkbox" id="an-pouch"${lsGet('lg_pouch', '1') === '1' ? ' checked' : ''}> Va con bolsita</label>
+    <label class="check"><input type="checkbox" id="an-boost"${lsGet('lg_boost', '1') === '1' ? ' checked' : ''}> Lo promocioné (boost ${eur(boostCost())})</label>
     <div class="err" id="sh-err"></div><button class="primary" data-a="an-sold">Vendido → apuntar venta</button></div>
     <div class="btnrow"><div class="field" style="flex:1"><label for="an-when">Publicado (si no fue ahora)</label><input id="an-when" type="datetime-local" value="${(() => { const d = new Date(l.listedAt); return dayKey(d) + 'T' + hhmm(l.listedAt); })()}"></div><button class="btn-o" data-a="an-when">Cambiar</button></div>
     <button class="ghost" data-a="an-down">Lo he quitado de Vinted</button>`;
@@ -1441,7 +1444,7 @@ function viewSpend() {
     return `<tr class="grp"><td colspan="2">${monthName(m)}</td><td class="n">${eur(sum(bs.filter((b) => !b.paid).map((b) => n0(b.amount))))}</td><td></td></tr>` + bs.map((b) =>
       `<tr class="${b.paid ? 'paid' : ''}"><td class="cb"><button class="chk" data-a="paid" data-id="${esc(b.id)}" aria-pressed="${!!b.paid}" aria-label="Marcar pagado">${b.paid ? '✓' : ''}</button></td><td>${esc(b.concept)}</td><td class="n">${eur(n0(b.amount))}</td><td class="x">${xbtn('bills', b.id)}</td></tr>`).join('');
   }).join('')}</tbody></table><div class="foot">Al marcar un pago se resta de la caja.</div>` : empty('Sin pagos fijos pendientes.');
-  return `<div class="toolbar">${mnav()}<span style="display:flex;gap:6px"><button class="btn-o" data-a="add" data-mode="ingreso">+ Ingreso</button><button class="btn-g" data-a="add" data-mode="gasto">+ Gasto</button></span></div>
+  return `<div class="toolbar">${mnav()}<span style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn-o" data-a="boostwaste">+ Boost sin venta</button><button class="btn-o" data-a="add" data-mode="ingreso">+ Ingreso</button><button class="btn-g" data-a="add" data-mode="gasto">+ Gasto</button></span></div>
     <div class="cols"><div class="col">${panel('Gastos de ' + MONTHS[pm(mk).m - 1], totals)}${panel('Movimientos', moves)}</div><div class="col">${panel('Pagos fijos', bills, '<button class="lnk" data-a="bill">+ Pago</button>')}</div></div>`;
 }
 
@@ -1603,6 +1606,7 @@ function sheetHTML() {
       <div class="fields2">${fld('s-cushion', 'Colchón: no bajar de (€)', s.cushion)}${fld('s-goal', 'Meta de beneficio al mes (€)', s.monthlyGoal)}</div>
       <div class="fields2">${fld('s-defcost', 'Coste por reloj si no sabes el exacto (€)', s.defaultCost)}<div></div></div>
       <div class="fields2">${fld('s-pouches', 'Bolsitas en casa', pouches(), 'inputmode="numeric"')}${fld('s-pouchcost', 'Coste por bolsita (€)', pouchCost())}</div>
+      <div class="fields2">${fld('s-boost', 'Coste de un boost (€)', boostCost())}<div></div></div>
       <div class="hint">Con un número aproximado basta. Cuando sepas el coste real de un reloj, ponlo en Stock → Editar y se usará ese.</div>
       ${fld('s-acc', 'Cuentas de venta (separadas por comas)', (s.accounts || []).join(', '), 'autocomplete="off"')}
       <div class="fields2">${fld('s-pend', 'Días que Vinted retiene el dinero', pendingDays(), 'inputmode="numeric"')}${fld('s-bench', 'Tests a la vez', n0(s.testBench) || B.FALLBACK.bench, 'inputmode="numeric"')}</div>
@@ -1712,6 +1716,14 @@ function sheetHTML() {
     return head('PLAN MENSUAL') + `<div class="hint">Ventas objetivo, mínimo y beneficio objetivo de cada mes.</div><table class="xl list"><thead><tr><th>Mes</th><th class="n">Ventas</th><th class="n">Mín.</th><th class="n">Benef. €</th></tr></thead><tbody>${months.map((mk) => `<tr><td>${MSHORT[pm(mk).m - 1]} ${String(pm(mk).y).slice(2)}</td><td><input class="cell" id="p-s-${mk}" inputmode="numeric" value="${n0(plan[mk].sales)}"></td><td><input class="cell" id="p-m-${mk}" inputmode="numeric" value="${n0(plan[mk].min)}"></td><td><input class="cell" id="p-p-${mk}" inputmode="decimal" value="${n0(plan[mk].profit)}"></td></tr>`).join('')}</tbody></table>
       <button class="ghost" data-a="plan-addmonth">+ Añadir mes</button><div class="err" id="sh-err"></div><button class="primary" data-a="save-plan">Guardar plan</button>`;
   }
+  if (kind === 'boostwaste') {
+    const ms = sortedModels().filter((m) => m.status !== 'descartado'), l = ctx.lid ? db.get(C.listings, ctx.lid) : null;
+    return head('BOOST SIN VENTA') + `<div class="hint">Promocionaste y no se vendió: es dinero gastado igual. Va a Gastos negocio y resta del beneficio neto.</div>
+      <div class="fields2">${fld('bw-amt', 'Coste (€)', String(boostCost()).replace('.', ','))}${dateFld('bw-date', todayKey())}</div>
+      <div class="fields2"><div class="field"><label for="bw-m">Reloj</label><select id="bw-m"><option value="">—</option>${ms.map((m) => `<option value="${esc(m.id)}"${l && l.modelId === m.id ? ' selected' : ''}>${esc(m.name)}</option>`).join('')}</select></div>
+      <div class="field"><label for="bw-acc">Cuenta</label><select id="bw-acc">${acctNames().map((a) => `<option${l && l.account === a ? ' selected' : ''}>${esc(a)}</option>`).join('')}</select></div></div>
+      <div class="err" id="sh-err"></div><button class="primary" data-a="save-boostwaste">Guardar boost</button>`;
+  }
   if (kind === 'bill') {
     return head('PAGO FIJO') + fld('b-concept', 'Concepto', '', 'autocomplete="off" placeholder="Ej. Carnet 1/4"') + `<div class="fields2">${fld('b-amt', 'Importe (€)', '')}<div class="field"><label for="b-month">Mes</label><input id="b-month" type="month" value="${curMonth()}"></div></div><div class="err" id="sh-err"></div><button class="primary" data-a="save-bill">Guardar</button>`;
   }
@@ -1739,6 +1751,7 @@ function saleBody(ctx) {
     <div class="fields2">${dateFld('f-date', ctx.date)}${fld('f-cost', 'Coste del reloj (€)', '')}</div>
     <div class="fields2">${fld('f-views', 'Vistas al venderse', '', 'inputmode="numeric" placeholder="opcional"')}${fld('f-likes', 'Likes al venderse', '', 'inputmode="numeric" placeholder="opcional"')}</div>
     <label class="check"><input type="checkbox" id="f-pouch"${lsGet('lg_pouch', '1') === '1' ? ' checked' : ''}> Va con bolsita${pouchCost() ? ` (${eur(pouchCost())})` : ''}</label>
+    <label class="check"><input type="checkbox" id="f-boost"${lsGet('lg_boost', '1') === '1' ? ' checked' : ''}> Lo promocioné (boost ${eur(boostCost())})</label>
     <div class="hint" id="f-esthint"></div>
     <input type="checkbox" id="f-dec" checked hidden>
     <div class="preview"><div class="kv"><span class="mut">Beneficio</span><b id="f-prev">pon el precio</b></div><div class="kv"><span class="mut">Va a pendiente en Vinted</span><b id="f-cash">—</b></div></div><div class="err" id="sh-err"></div>
@@ -1921,7 +1934,7 @@ function afterSheet() {
   const sel = sheetEl.querySelector('#f-model');
   if (sel) {
     const prev = () => {
-      const p = num(sv('f-price')), c = num(sv('f-cost')) + ($('#f-pouch', sheetEl).checked ? pouchCost() : 0), o = $('#f-prev', sheetEl), k = $('#f-cash', sheetEl);
+      const p = num(sv('f-price')), c = num(sv('f-cost')) + ($('#f-pouch', sheetEl).checked ? pouchCost() : 0) + ($('#f-boost', sheetEl).checked ? boostCost() : 0), o = $('#f-prev', sheetEl), k = $('#f-cash', sheetEl);
       k.textContent = isNaN(p) ? '—' : eur(p, true); k.className = isNaN(p) ? '' : 'pos';
       if (isNaN(p) || isNaN(c)) { o.textContent = '—'; o.className = ''; return; }
       o.textContent = eur(p - c, true); o.className = cls(p - c);
@@ -1934,7 +1947,7 @@ function afterSheet() {
       const fp = $('#f-photo', sheetEl); if (fp) fp.innerHTML = m ? `${thumb(m, 64)}<span><b>${esc(m.name)}</b><span class="mut">${n0(m.home)} en casa${n0(m.transit) ? ' · ' + n0(m.transit) + ' en camino' : ''}</span></span>` : '';
     };
     sel.addEventListener('change', sync_);
-    $('#f-price', sheetEl).addEventListener('input', prev); $('#f-cost', sheetEl).addEventListener('input', prev); $('#f-pouch', sheetEl).addEventListener('change', prev);
+    $('#f-price', sheetEl).addEventListener('input', prev); $('#f-cost', sheetEl).addEventListener('input', prev); $('#f-pouch', sheetEl).addEventListener('change', prev); $('#f-boost', sheetEl).addEventListener('change', prev);
     sync_();
   }
   if (sheetEl.querySelector('#o-prev')) {
@@ -1991,8 +2004,9 @@ async function saveSale() {
   if (!isNaN(cost) && cost < 0) return shErr('El coste no puede ser negativo.');
   if (!validDate(date)) return shErr('Pon una fecha válida.');
   const pouch = $('#f-pouch', sheetEl).checked; lsSet('lg_pouch', pouch ? '1' : '0');
+  const boost = $('#f-boost', sheetEl).checked; lsSet('lg_boost', boost ? '1' : '0');
   const at = date === todayKey() ? nowISO() : date + 'T12:00:00.000Z';
-  const res = await recordSale({ m, price, cost, acc: sv('f-acc'), date, pouch, views: num(sv('f-views')), likes: num(sv('f-likes')), soldAt: at });
+  const res = await recordSale({ m, price, cost, acc: sv('f-acc'), date, pouch, boost, views: num(sv('f-views')), likes: num(sv('f-likes')), soldAt: at });
   if (isNaN(num(m.landed)) && !isNaN(cost)) await db.patch(C.models, m.id, { landed: r2(cost), landedSrc: 'manual' });
   closeSheet(); st.selDay = date; st.month = date.slice(0, 7); toast('Venta guardada' + (res.profit === null ? ' · falta el coste' : ' · ' + eur(res.profit, true)) + (res.lst ? ` · anuncio cerrado (${dur(n0((db.get(C.listings, res.lst.id) || {}).hoursToSell))})` : ''));
 }
@@ -2025,6 +2039,13 @@ async function saveOrder() {
   for (const id in al.per) { const m = model(id); const l = out.find((z) => z.modelId === id); await db.patch(C.models, id, { transit: n0(m && m.transit) + al.per[id].qty, landed: al.per[id].landed, landedSrc: lf ? lf.src : 'estimado', landedOrder: o.id, unitPrice: l.unit }); }
   for (const id in al.per) await relotSales(id);
   closeSheet(); st.tab = 'stock'; st.stockSeg = 'pedidos'; lsSet('lg_seg', 'pedidos'); location.hash = 'stock'; renderSoon(); toast('Pedido guardado · −' + eur(goods + sh - owed) + ' de caja' + (owed ? ' · debes ' + eur(owed) : ''));
+}
+async function saveBoostWaste() {
+  const amt = num(sv('bw-amt')), date = sv('bw-date'), m = model(sv('bw-m')), acc = sv('bw-acc'), lid = st.sheet.ctx.lid || null;
+  if (isNaN(amt) || amt <= 0) return shErr('Pon el coste del boost.');
+  if (!validDate(date)) return shErr('Pon una fecha válida.');
+  await db.put(C.spend, { date, at: nowISO(), amount: r2(amt), kind: 'negocio', cat: 'Boost Vinted', note: `boost sin venta${m ? ' · ' + m.name : ''}${acc ? ' · ' + acc : ''}`, boostWasted: true, modelId: m ? m.id : null, account: acc || null, listingId: lid });
+  closeSheet(); toast('Boost sin venta · −' + eur(amt));
 }
 async function saveOrderEdit() {
   const o = db.get(C.orders, st.sheet.ctx.id); if (!o) return closeSheet();
@@ -2098,7 +2119,7 @@ async function saveSettings() {
   if (isNaN(g) || g <= 0) return shErr('Pon tu meta mensual.');
   const accs = sv('s-acc').split(',').map((s) => s.trim()).filter(Boolean);
   const dc = num(sv('s-defcost')), pc = num(sv('s-pouchcost')), pq = num(sv('s-pouches'));
-  const cur = S0(), patch = { cushion: isNaN(cush) ? 0 : r2(cush), monthlyGoal: r2(g), defaultCost: isNaN(dc) ? 10 : r2(dc), pouchCost: isNaN(pc) ? 0 : r2(pc), pouches: isNaN(pq) ? 0 : Math.max(0, Math.round(pq)), accounts: accs.length ? accs : cur.accounts };
+  const cur = S0(), patch = { cushion: isNaN(cush) ? 0 : r2(cush), monthlyGoal: r2(g), defaultCost: isNaN(dc) ? 10 : r2(dc), pouchCost: isNaN(pc) ? 0 : r2(pc), boostCost: isNaN(num(sv('s-boost'))) ? 1.5 : r2(num(sv('s-boost'))), pouches: isNaN(pq) ? 0 : Math.max(0, Math.round(pq)), accounts: accs.length ? accs : cur.accounts };
   const int = (id, d) => { const v = Math.round(num(sv(id))); return isNaN(v) || v <= 0 ? d : v; };
   Object.assign(patch, { pendingDays: int('s-pend', B.FALLBACK.pendingDays), testBench: int('s-bench', B.FALLBACK.bench), maxAccPerModel: int('s-maxacc', B.FALLBACK.maxAccPerModel), cycleDays: int('s-cycle', B.FALLBACK.cycleDays), leadDDP: int('s-lddp', B.FALLBACK.leadDDP), leadAli: int('s-lali', B.FALLBACK.leadAli) });
   if (r2(cash) !== r2(bankNow())) { patch.cash = r2(cash); patch.cashAt = nowISO(); }
@@ -2354,7 +2375,7 @@ function exportBackup() {
 
 /* ---------------- events ---------------- */
 const SAVE = { 'save-orphans': saveOrphans, 'save-sale': saveSale, 'save-order': saveOrder, 'save-receive': saveReceive, 'save-spend': saveSpend, 'save-income': saveIncome, 'save-model': saveModel, 'save-settings': saveSettings, 'save-bill': saveBill, 'save-goal': saveGoal,
-  'save-snap': saveSnap, 'save-withdraw': saveWithdraw, 'save-catchup': saveCatchup, 'save-newtest': saveNewTest, 'save-listing': saveListing, 'save-acc': saveAcc, 'save-plan': savePlan, 'save-debt': saveDebt, 'save-order-edit': saveOrderEdit };
+  'save-snap': saveSnap, 'save-withdraw': saveWithdraw, 'save-catchup': saveCatchup, 'save-newtest': saveNewTest, 'save-listing': saveListing, 'save-acc': saveAcc, 'save-plan': savePlan, 'save-debt': saveDebt, 'save-order-edit': saveOrderEdit, 'save-boostwaste': saveBoostWaste };
 function setTab(v) { st.tab = v; lsSet('lg_tab', v); if (location.hash.slice(1) !== v) history.replaceState(null, '', '#' + v); window.scrollTo(0, 0); renderSoon(); }
 document.addEventListener('click', async (e) => {
   if (e.target === sheetEl) { closeSheet(); return; }
@@ -2386,6 +2407,7 @@ document.addEventListener('click', async (e) => {
     case 'receive': openSheet('receive', { id: b.dataset.id }); break;
     case 'order': openSheet('order', { id: b.dataset.id }); break;
     case 'order-edit': openSheet('order-edit', { id: b.dataset.id }); break;
+    case 'boostwaste': openSheet('boostwaste', { lid: b.dataset.id || null }); break;
     case 'sale-shipped': await db.patch(C.sales, b.dataset.id, { shipped: true, shippedAt: nowISO() }); toast('Marcado como enviado'); break;
     // shipped from a unit you had at home: it no longer waits for the box (the box keeps all its units)
     case 'sale-shipped-done': await db.patch(C.sales, b.dataset.id, { shipped: true, shippedAt: nowISO(), reserved: false, fromStock: true }); toast('Enviado · ya no se descuenta de lo que llega'); break;
@@ -2419,7 +2441,8 @@ document.addEventListener('click', async (e) => {
       const l = db.get(C.listings, st.sheet.ctx.id), m = l && model(l.modelId), price = num(sv('an-p')), when = sv('an-at');
       if (!l || !m) break; if (isNaN(price) || price <= 0) { shErr('Pon el precio de venta.'); break; }
       const at = when ? new Date(when).toISOString() : nowISO(), pouch = $('#an-pouch', sheetEl).checked; lsSet('lg_pouch', pouch ? '1' : '0');
-      const res = await recordSale({ m, price, cost: NaN, acc: l.account, date: dayKey(new Date(at)), pouch, listing: l, views: num(sv('an-sv')), likes: num(sv('an-sf')), soldAt: at });
+      const boost = $('#an-boost', sheetEl).checked; lsSet('lg_boost', boost ? '1' : '0');
+      const res = await recordSale({ m, price, cost: NaN, acc: l.account, date: dayKey(new Date(at)), pouch, boost, listing: l, views: num(sv('an-sv')), likes: num(sv('an-sf')), soldAt: at });
       closeSheet(); toast(`Vendido en ${dur((Date.parse(at) - Date.parse(l.listedAt)) / 3600000)}` + (res.profit === null ? '' : ' · ' + eur(res.profit, true))); break;
     }
     case 'an-when': { const w = sv('an-when'); if (w) { await db.patch(C.listings, st.sheet.ctx.id, { listedAt: new Date(w).toISOString() }); toast('Hora cambiada'); redrawSheet(); } break; }

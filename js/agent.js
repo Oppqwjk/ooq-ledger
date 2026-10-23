@@ -166,7 +166,9 @@ export function createAgent(api) {
     const plan = bz.plan, lane = (k) => plan.lines.filter((l) => l.lane === k).map((l) => ({ reloj: l.m.name, uds: l.qty, coste: r(l.cost) }));
     const nothing = plan.lines.length ? undefined : owed > 0 ? `nada: primero la deuda (${r(owed)} €)` : plan.skipped.length ? `nada: falta caja (gastable ${r(plan.cash)} €)` : 'nada: ningún ganador se queda sin stock antes de que llegue un DDP';
     const allSales = L('sales').filter((v) => !v.cancelled), bySale = (m) => allSales.filter((v) => v.modelId === m.id);
+    // boosts on a sale are already inside its profit; the rest (boosts without a sale, imported history) spread over all sales
     const boostTot = L('spend').filter((x) => /boost/i.test(x.cat || '')).reduce((t, x) => t + n0(x.amount), 0), boostPer = allSales.length ? boostTot / allSales.length : 0;
+    const boostSale = allSales.reduce((t, v) => t + n0(v.boost), 0), boostWaste = L('spend').filter((x) => x.boostWasted).reduce((t, x) => t + n0(x.amount), 0);
     const avg = (vs) => (vs.length ? r(vs.reduce((t, v) => t + n0(v.price), 0) / vs.length) : undefined), d30 = (() => { const d = new Date(today + 'T12:00:00'); d.setDate(d.getDate() - 29); return d.toISOString().slice(0, 10); })();
     const accs = s.accounts || [];
     const pouchesComing = orders.filter((o) => o.status !== 'recibido' && o.pouches).reduce((t, o) => t + n0(o.pouches.qty), 0);
@@ -184,6 +186,7 @@ export function createAgent(api) {
         ventas: p.S, objetivo: p.T, minimo: p.MIN,
         beneficio_ventas: r(p.P), gastos_negocio: r(p.biz), beneficio_neto: r(p.net), objetivo_beneficio: p.PT, ventas_sin_coste: p.noCost || undefined,
         formula: 'beneficio_ventas = Σ(precio − coste del reloj − bolsita usada en esa venta). Los boosts van en gastos_negocio. beneficio_neto = beneficio_ventas − gastos_negocio (es el de MESES). Ventas con coste FALTA no suman.',
+        boosts: { en_ventas: r(boostSale), sin_venta: r(boostWaste), coste_un_boost: r(api.boostCost ? api.boostCost() : 1.5), nota: 'el boost de una venta resta de su beneficio; un boost sin venta va a gastos_negocio' },
         ritmo_dia: r(p.paceDay), necesita_dia: r(p.need), proyeccion: p.proj, proyeccion_con_stock_infinito: p.projDemand, limite: p.limitText, limitados: (p.limited || []).map((l) => `${l.name}: sin stock del ${l.until} ${l.back ? 'al ' + l.back : 'a fin de mes'}`),
         proyeccion_formula: 'por reloj: lo que vende con lo que hay en casa hasta que llega el pedido + lo que llega este mes, al ritmo con stock de cada reloj',
         stock_para_el_mes: { en_casa: p.inHand, llegan_antes_de_fin_de_mes: p.landing, proxima_llegada: p.nextIn },
@@ -204,7 +207,7 @@ export function createAgent(api) {
           precio_1688: n0(x.m.unitPrice) || 'falta', peso_g: n0(x.m.weight) || 'falta',
           ventas_total: pr.length, precio_medio: avg(pr), precio_medio_30d: avg(pr.filter((v) => v.date >= d30)),
           benef: r(x.unitProfit), benef_con_boost: x.nCost ? r(x.unitProfit - boostPer) : undefined,
-          benef_fuente: x.nCost ? `media de las últimas ${x.upN} ventas con coste (de ${pr.length}); con boost resta ${r(boostPer)} €/venta (boosts totales ÷ ventas)` : x.upPrice ? `estimado: vendiendo a ${r(x.upPrice)} €` : 'sin precio de venta',
+          benef_fuente: x.nCost ? `media de las últimas ${x.upN} ventas con coste (de ${pr.length}), ya con el boost de cada venta; benef_con_boost resta además ${r(boostPer)} €/venta (boosts sin venta e historial ÷ ventas)` : x.upPrice ? `estimado: vendiendo a ${r(x.upPrice)} €` : 'sin precio de venta',
           llega: x.arrivals.map((a) => { const o = orders.find((z) => z.id === a.id); return { uds: a.qty, via: a.lane === 'dhl' || a.lane === 'dua' ? 'DUA' : a.lane === 'ali' ? 'AliExpress' : 'DDP', eta: a.eta, eta_fuente: o ? etaSrc(o) : undefined }; }),
           llego: x.arrived || undefined, nota: x.why || undefined,
         };
@@ -224,7 +227,7 @@ export function createAgent(api) {
       ganador_ref: { favs: r(bz.bench.fav), vistas_dia: r(bz.bench.vpd, 0), ofertas_100: r(bz.bench.opv, 1), fuente: bz.bench.learned ? `medido en ${bz.bench.n} stats de tus ganadores` : 'por defecto (aún no medido con tus ganadores)' },
       tests_ritmo: { semana: bz.tp.perWeek, a_la_vez: bz.benchN, corriendo: bz.running, faltan_ganadores: bz.tp.winnersNeeded === null ? 'sin calcular' : bz.tp.winnersNeeded, ganadores_necesarios: bz.tp.winnersTotal, ganadores_activos: bz.tp.liveWinners, formula: bz.tp.formula },
       cuentas: bz.acc.accs.map((a) => ({ cuenta: a.name, estado: a.status, riesgo_anuncios: a.status === 'activa' ? a.health : undefined, activos: a.live.length, ventas_7d: a.s7, ventas_30d: a.s30, retiradas_30d: a.rem30, ...(api.accExtra ? api.accExtra(a.name) : {}) })),
-      ventas_recientes: allSales.slice().sort((a, b) => (b.at || b.date).localeCompare(a.at || a.date)).slice(0, 8).map((v) => ({ fecha: v.date, reloj: (L('models').find((m) => m.id === v.modelId) || {}).name || v.modelName, precio: r(n0(v.price)), coste: v.costMissing ? 'FALTA' : r(n0(v.watchCost !== undefined ? v.watchCost : v.cost - n0(v.extra))), bolsita: r(n0(v.extra)) || undefined, beneficio: v.costMissing ? 'FALTA' : r(typeof v.profit === 'number' ? v.profit : n0(v.price) - n0(v.cost)), cuenta: v.account, cuenta_aprox: v.accountEstimated || undefined })),
+      ventas_recientes: allSales.slice().sort((a, b) => (b.at || b.date).localeCompare(a.at || a.date)).slice(0, 8).map((v) => ({ fecha: v.date, reloj: (L('models').find((m) => m.id === v.modelId) || {}).name || v.modelName, precio: r(n0(v.price)), coste: v.costMissing ? 'FALTA' : r(n0(v.watchCost !== undefined ? v.watchCost : v.cost - n0(v.extra))), bolsita: r(n0(v.extra) - n0(v.boost)) || undefined, boost: r(n0(v.boost)) || undefined, beneficio: v.costMissing ? 'FALTA' : r(typeof v.profit === 'number' ? v.profit : n0(v.price) - n0(v.cost)), cuenta: v.account, cuenta_aprox: v.accountEstimated || undefined })),
       ventas_sin_reloj: allSales.filter((v) => !L('models').some((m) => m.id === v.modelId)).map((v) => `${v.date} ${v.modelName} ${v.price}€`),
       ventas_por_arreglar: toFix.map((v) => `${v.date} ${(L('models').find((m) => m.id === v.modelId) || {}).name || v.modelName} ${v.price}€ ${v.account || ''}${v.costMissing ? ' · coste FALTA' : ''}`),
       posibles_duplicados: bz.moves.filter((m) => m.tag === 'Datos' && m.title.startsWith('¿')).map((m) => m.title),
