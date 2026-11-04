@@ -48,7 +48,7 @@ const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
 
 const STATUS = { ganador: 'Ganador', test: 'Test', espera: 'En espera', descartado: 'Descartado' };
 const SORDER = { ganador: 0, test: 1, espera: 2, descartado: 3 };
-const APP_V = 'v35';
+const APP_V = 'v36';
 const CATS = { personal: ['Comida', 'Ocio', 'Ropa', 'Transporte', 'Móvil y subs', 'Ahorro / retiro personal', 'Otros'], negocio: ['Boost Vinted', 'Envíos', 'Fotos y material', 'Otros negocio'] };
 // what a goal can measure; everything except "manual" and "task" is read from your data automatically
 const METRICS = {
@@ -272,7 +272,7 @@ const st = {
 /* ---------------- shell ---------------- */
 function shell() {
   app.innerHTML = `<header class="ribbon"><div class="wrap rib-in">
-      <div class="brand"><img src="icons/icon-192.png" alt=""><b>OOQ</b></div>
+      <div class="brand"><img class="brand-mark" src="icons/icon.svg" alt=""><b>OO<i>Q</i></b></div>
       <nav class="toptabs" aria-label="Secciones">${TOPBAR.map((k) => `<button data-a="tab" data-v="${k}">${(TABS.find((t) => t[0] === k) || [k, k])[1]}</button>`).join('')}</nav>
       <div class="top-r"><button class="syncpill" data-a="settings" id="syncpill"><i></i><span>Local</span></button><button class="iconbtn addtop" data-a="add" aria-label="Añadir"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
       <button class="iconbtn" data-a="settings" aria-label="Ajustes"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button></div>
@@ -321,6 +321,7 @@ function render() {
   document.querySelectorAll('[data-a="tab"][data-v="manager"]').forEach((b) => b.classList.toggle('dot', st.briefNew && st.tab !== 'manager'));
   if (st.tab === 'manager') st.briefNew = false;
   main.innerHTML = v();
+  if (st.tab !== render._tab) { render._tab = st.tab; main.classList.remove('enter'); void main.offsetWidth; main.classList.add('enter'); clearTimeout(render._t); render._t = setTimeout(() => main.classList.remove('enter'), 900); }
   labelTables(main);
   if (chat) { const box = $('#chatlog'); if (box) window.scrollTo(0, document.body.scrollHeight); }
   updatePill();
@@ -1081,6 +1082,7 @@ async function recordSale({ m, price, cost, acc, date, pouch, boost, listing, vi
   if (dec) await db.patch(C.models, m.id, { home: n0(m.home) - 1 });
   if (!manual) await relotSales(m.id);
   const fresh = db.get(C.sales, sale.id) || sale;
+  if (date === todayKey()) celebrate(fresh.costMissing ? null : n0(fresh.profit));
   return { sale: fresh, lst, profit: fresh.costMissing ? null : n0(fresh.profit) };
 }
 
@@ -1533,6 +1535,23 @@ function viewGoals() {
   const mine = panel('Mis objetivos', gs.length ? goalsTable(gs) : empty('Aún no hay objetivos. Crea uno y se mide solo con tus datos.'), '<button class="lnk" data-a="goal">+ Objetivo</button>');
   return `<div class="toolbar"><span class="ttl">Objetivos</span><div class="tb-r"><button class="btn-g" data-a="goal">+ Objetivo</button><button class="btn-o" data-a="planedit">Objetivo del mes</button><button class="ghost" data-a="stock-more">${st.stockMore ? 'Ver menos' : 'Ver más'}</button></div></div>
     ${k}<div class="cols"><div class="col">${hustleCard()}${ladderCard(true)}${mine}</div><div class="col">${milestonesCard()}${st.stockMore ? paceBlock() + panel('Plan mensual', planTable(), '<button class="lnk" data-a="planedit">Editar</button>') : ''}</div></div>`;
+}
+
+/* ================= a sale is a moment: money pop + sparks ================= */
+function celebrate(profit) {
+  try { if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return; } catch {}
+  const h = hustle(), top = h.today === h.T * 2, hit = h.today === h.T;
+  const el = document.createElement('div');
+  el.className = 'cash-pop' + (hit || top ? ' gold' : '');
+  el.innerHTML = `<b>${profit === null ? '+1 venta' : esc(eur(profit, true))}</b><span>${top ? 'Día top: doble objetivo' : hit ? 'Objetivo de hoy cumplido · +500 XP' : `+100 XP · ${h.today}/${h.T} hoy`}</span>`;
+  document.body.appendChild(el); setTimeout(() => el.remove(), 2000);
+  const n = hit || top ? 44 : 22, cols = hit || top ? ['#ffe08a', '#f5c542', '#5cf2a8', '#22e58a'] : ['#5cf2a8', '#22e58a', '#12b866', '#eafff2'];
+  for (let i = 0; i < n; i++) {
+    const s2 = document.createElement('i'), a = Math.random() * Math.PI * 2, d = 90 + Math.random() * 170;
+    s2.className = 'spark';
+    s2.style.cssText = `left:50%;top:38%;background:${cols[i % cols.length]};--dx:${Math.cos(a) * d}px;--dy:${Math.sin(a) * d + 60}px;--r:${Math.round(Math.random() * 540)}deg;animation-delay:${Math.random() * 0.12}s`;
+    document.body.appendChild(s2); setTimeout(() => s2.remove(), 1500);
+  }
 }
 
 /* ================= daily target, XP, streak ================= */
@@ -3211,7 +3230,7 @@ async function migrate12() {
 /* ---------------- login ---------------- */
 function loginView(done) {
   const email = lsGet('lg-login-email', '');
-  app.innerHTML = `<div class="wrap login"><form class="card" novalidate><img src="icons/icon-192.png" alt=""><h1>OOQ LEDGER</h1><p>Entra una vez en cada dispositivo y se queda guardado. La primera vez crea tu cuenta con la contraseña que pongas.</p>
+  app.innerHTML = `<div class="wrap login"><form class="card" novalidate><img src="icons/icon.svg" alt=""><h1>OOQ</h1><p>Entra una vez en cada dispositivo y se queda guardado. La primera vez crea tu cuenta con la contraseña que pongas.</p>
     <div class="field"><label for="lg-email">Email</label><input id="lg-email" type="email" autocomplete="username" inputmode="email" value="${esc(email)}"></div>
     <div class="field"><label for="lg-pass">Contraseña</label><input id="lg-pass" type="password" autocomplete="current-password" minlength="6"></div>
     <div class="err" id="lg-err"></div><button class="primary" type="submit">Entrar</button></form></div>`;
