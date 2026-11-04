@@ -48,7 +48,7 @@ const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
 
 const STATUS = { ganador: 'Ganador', test: 'Test', espera: 'En espera', descartado: 'Descartado' };
 const SORDER = { ganador: 0, test: 1, espera: 2, descartado: 3 };
-const APP_V = 'v39';
+const APP_V = 'v40';
 const CATS = { personal: ['Comida', 'Ocio', 'Ropa', 'Transporte', 'Móvil y subs', 'Ahorro / retiro personal', 'Otros'], negocio: ['Boost Vinted', 'Envíos', 'Fotos y material', 'Otros negocio'] };
 // what a goal can measure; everything except "manual" and "task" is read from your data automatically
 const METRICS = {
@@ -1720,7 +1720,6 @@ async function addLabelFiles(files) {
 function lbRow(it, i, ms, accs, tags) {
   const head2 = `<div class="lbth">${it.status === 'ready' ? `<img src="${it.img}" alt="">` : it.status === 'error' ? '<span class="neg sm2">PDF no válido</span>' : '<span class="mut sm2">recortando…</span>'}</div>`;
   const sale = lbLogSales() ? `<div class="lbr-sel"><select data-lbf="modelId" data-i="${i}" aria-label="Reloj">${ms.map((m) => `<option value="${esc(m.id)}"${m.id === it.modelId ? ' selected' : ''}>${esc(m.name)}</option>`).join('')}</select>
-      <select data-lbf="acc" data-i="${i}" aria-label="Cuenta">${accs.map((a) => `<option${a === it.acc ? ' selected' : ''}>${esc(a)}</option>`).join('')}</select>
       <input data-lbf="price" data-i="${i}" inputmode="decimal" value="${esc(it.price)}" placeholder="€" aria-label="Precio"></div>` : '';
   return `<div class="lbrow${it.status === 'error' ? ' bad' : ''}">${head2}<div class="lbr-f"><div class="lbr-top"><b>#${i + 1}</b><span class="mut sm2">${esc(it.name)}</span></div>
     <div class="chips">${tags.map((t) => `<button type="button" class="chip" data-a="lbi-tag" data-i="${i}" data-v="${esc(t)}" aria-pressed="${t === it.tag}">${esc(t)}</button>`).join('')}</div>${sale}</div>
@@ -1737,7 +1736,7 @@ function viewLabels() {
   const ready = items.filter((x) => x.status === 'ready').length, busy = items.some((x) => x.status === 'reading');
   const list = items.length ? panel(`${items.length} etiqueta${items.length === 1 ? '' : 's'} para imprimir`, `${opts}<div class="lbrows">${items.map((it, i) => lbRow(it, i, ms, accs, tags)).join('')}</div>
       <div class="stack pad"><div class="err" id="lb-err">${esc(lbS.err)}</div><button class="primary" data-a="lb-go"${busy || !ready ? ' disabled' : ''}>${busy ? 'Recortando…' : `Descargar ${ready} etiqueta${ready === 1 ? '' : 's'} (${Lb.SIZES[size].label})`}</button>
-      <div class="hint">Un PDF con una etiqueta por página, listo para la impresora de etiquetas. El color sale escrito arriba en el hueco blanco.${lbLogSales() ? ' Cada venta se apunta y resta 1 del stock.' : ''}</div></div>`, '<button class="lnk" data-a="lb-clear">Vaciar</button>') : '';
+      <div class="hint">Un PDF con una etiqueta por página, listo para la impresora de etiquetas. El color sale escrito arriba en pequeño, nada más.${lbLogSales() ? ' Cada venta se apunta y resta 1 del stock.' : ''}</div></div>`, '<button class="lnk" data-a="lb-clear">Vaciar</button>') : '';
   const pk = {}; today.forEach((l) => { const k = tagOf(l); pk[k] = (pk[k] || 0) + 1; });
   const done2 = today.length ? panel(`Hechas hoy · ${today.length}`, `<div class="lb-pack">${Object.entries(pk).sort((a, b) => b[1] - a[1]).map(([n, c]) => `<div class="kv"><span>${esc(n)}</span><b>${c}×</b></div>`).join('')}</div>
       <div class="stack pad"><button class="btn-o" data-a="lb-again">Descargar otra vez las ${today.length} de hoy</button></div>`) : '';
@@ -1772,7 +1771,7 @@ async function printLabels() {
   }
   let n = (await Lb.ofDay(t)).reduce((x, l) => Math.max(x, n0(l.n)), 0);
   const made = items.map((it) => ({ it, n: ++n })).sort((a, b) => (a.it.tag || '').localeCompare(b.it.tag || '') || a.n - b.n);
-  const text = (x) => `#${x.n} · ${x.it.tag || (model(x.it.modelId) || {}).name || ''}`;
+  const text = (x) => x.it.tag || (model(x.it.modelId) || {}).name || ''; // only the SKU goes on the label
   let pdf;
   try { pdf = await Lb.build(made.map((x) => ({ bytes: x.it.bytes, crop: x.it.crop, rot: x.it.rot, text: text(x) })), lbSize()); } catch (e) { return lbErr('No se pudo crear el PDF: ' + (e.message || e)); }
   Lb.download(pdf, `ETIQUETAS_${t}.pdf`);
@@ -1792,7 +1791,7 @@ async function printLabels() {
 async function printAgain() {
   const list = (await Lb.ofDay(todayKey())).sort((a, b) => tagOf(a).localeCompare(tagOf(b)) || a.n - b.n);
   if (!list.length) return;
-  Lb.download(await Lb.build(list.map((l) => ({ bytes: l.bytes, crop: l.crop, rot: l.rot || 0, text: `#${l.n} · ${tagOf(l)}` })), lbSize()), `ETIQUETAS_${todayKey()}.pdf`);
+  Lb.download(await Lb.build(list.map((l) => ({ bytes: l.bytes, crop: l.crop, rot: l.rot || 0, text: tagOf(l) })), lbSize()), `ETIQUETAS_${todayKey()}.pdf`);
 }
 
 /* ---------------- sheets ---------------- */
