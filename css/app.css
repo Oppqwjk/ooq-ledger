@@ -948,3 +948,6 @@ html, body { background: var(--bg); }
 .lbr-x { display: grid; gap: 6px; justify-items: center; }
 .lbr-x .iconbtn { width: 34px; height: 34px; font-size: 17px; }
 @media (max-width: 599px) { .lbrow { grid-template-columns: 64px minmax(0, 1fr) auto; } .lbth { width: 64px; } .lbth img { max-width: 64px; } }
+.line-ed.l3 { grid-template-columns: minmax(0, 1fr) 62px 96px 30px; }
+@media (max-width: 440px) { .line-ed.l3 { grid-template-columns: minmax(0, 1fr) 52px 84px 26px; } }
+.line-ed.l3 label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
