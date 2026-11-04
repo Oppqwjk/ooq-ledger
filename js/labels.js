@@ -63,87 +63,108 @@ const latin1 = (s) => String(s).normalize('NFC').replace(/[^\x20-\x7E\xA0-\xFF]/
 export const headerText = ({ n, tag }) => latin1(`#${n} · ${tag}`);
 
 /**
- * Draw page 1 into a canvas `width` px wide. Returns helpers to turn a rectangle drawn on the
- * canvas into a crop (fractions of the page box, the same numbers stamp() uses) and back.
+ * Find the label on page 1 by itself: render the page, take the largest connected block of
+ * dark pixels (the label's frame with everything inside it) and return its box as fractions of
+ * the page box (PDF space), plus a picture of just that part for the thumbnail.
+ * Instructions, dashed cut lines and scissors are separate small blocks, so they are left out.
  */
-export async function preview(bytes, canvas, width) {
+export async function analyze(bytes) {
   const pdfjs = await viewer();
   const doc = await pdfjs.getDocument({ data: bytes.slice(0) }).promise;
   const page = await doc.getPage(1);
-  const base = page.getViewport({ scale: 1 });
-  const dpr = Math.min(2, window.devicePixelRatio || 1);
-  const vp = page.getViewport({ scale: (width / base.width) * dpr });
-  canvas.width = Math.round(vp.width); canvas.height = Math.round(vp.height);
-  canvas.style.width = Math.round(vp.width / dpr) + 'px'; canvas.style.height = Math.round(vp.height / dpr) + 'px';
-  await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
-  const [vx1, vy1, vx2, vy2] = page.view; const vw = vx2 - vx1, vh = vy2 - vy1;
-  const key = `${Math.round(vw)}x${Math.round(vh)}r${page.rotate || 0}`;
-  // canvas CSS px rect {l,t,w,h} -> page-box fractions {x,y,w,h} (PDF space, unrotated)
-  const toCrop = (r) => {
-    const a = vp.convertToPdfPoint(r.l * dpr, r.t * dpr), b = vp.convertToPdfPoint((r.l + r.w) * dpr, (r.t + r.h) * dpr);
-    const x = (Math.min(a[0], b[0]) - vx1) / vw, y = (Math.min(a[1], b[1]) - vy1) / vh;
-    const w = Math.abs(a[0] - b[0]) / vw, h = Math.abs(a[1] - b[1]) / vh;
-    const c = (v) => Math.max(0, Math.min(1, v));
-    return { x: c(x), y: c(y), w: Math.min(w, 1 - c(x)), h: Math.min(h, 1 - c(y)) };
-  };
-  const toRect = (cr) => {
-    const p1 = vp.convertToViewportPoint(vx1 + cr.x * vw, vy1 + cr.y * vh), p2 = vp.convertToViewportPoint(vx1 + (cr.x + cr.w) * vw, vy1 + (cr.y + cr.h) * vh);
-    return { l: Math.min(p1[0], p2[0]) / dpr, t: Math.min(p1[1], p2[1]) / dpr, w: Math.abs(p1[0] - p2[0]) / dpr, h: Math.abs(p1[1] - p2[1]) / dpr };
-  };
-  const css = { w: vp.width / dpr, h: vp.height / dpr };
+  const vp = page.getViewport({ scale: 1.5 });
+  const W = Math.round(vp.width), H = Math.round(vp.height);
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  const cx = cv.getContext('2d', { willReadFrequently: true });
+  cx.fillStyle = '#fff'; cx.fillRect(0, 0, W, H);
+  await page.render({ canvasContext: cx, viewport: vp }).promise;
+  const px = cx.getImageData(0, 0, W, H).data, dark = new Uint8Array(W * H);
+  let any = 0, ax1 = W, ay1 = H, ax2 = 0, ay2 = 0;
+  for (let i = 0, k = 0; k < W * H; i += 4, k++) {
+    if (px[i] * 0.3 + px[i + 1] * 0.59 + px[i + 2] * 0.11 < 170) {
+      dark[k] = 1; any++;
+      const x = k % W, y = (k - x) / W;
+      if (x < ax1) ax1 = x; if (x > ax2) ax2 = x; if (y < ay1) ay1 = y; if (y > ay2) ay2 = y;
+    }
+  }
+  // connected blocks (8 neighbours); keep the one with the biggest box
+  const seen = new Uint8Array(W * H), q = new Int32Array(W * H);
+  let best = null;
+  for (let k0 = 0; k0 < W * H; k0++) {
+    if (!dark[k0] || seen[k0]) continue;
+    let h = 0, t = 0, x1 = W, y1 = H, x2 = 0, y2 = 0;
+    q[t++] = k0; seen[k0] = 1;
+    while (h < t) {
+      const k = q[h++], x = k % W, y = (k - x) / W;
+      if (x < x1) x1 = x; if (x > x2) x2 = x; if (y < y1) y1 = y; if (y > y2) y2 = y;
+      for (let dy = -1; dy <= 1; dy++) {
+        const yy = y + dy; if (yy < 0 || yy >= H) continue;
+        for (let dx = -1; dx <= 1; dx++) {
+          const xx = x + dx; if (xx < 0 || xx >= W) continue;
+          const kk = yy * W + xx; if (dark[kk] && !seen[kk]) { seen[kk] = 1; q[t++] = kk; }
+        }
+      }
+    }
+    const area = (x2 - x1 + 1) * (y2 - y1 + 1);
+    if (!best || area > best.area) best = { x1, y1, x2, y2, area };
+  }
+  // no clear frame (a label without a border): fall back to everything printed on the page
+  let r = best && best.area > W * H * 0.04 ? best : any ? { x1: ax1, y1: ay1, x2: ax2, y2: ay2 } : { x1: 0, y1: 0, x2: W - 1, y2: H - 1 };
+  const m = 4; // a hair of white around the frame
+  r = { x1: Math.max(0, r.x1 - m), y1: Math.max(0, r.y1 - m), x2: Math.min(W - 1, r.x2 + m), y2: Math.min(H - 1, r.y2 + m) };
+  const [vx1, vy1, vx2, vy2] = page.view, vw = vx2 - vx1, vh = vy2 - vy1;
+  const a = vp.convertToPdfPoint(r.x1, r.y1), b = vp.convertToPdfPoint(r.x2 + 1, r.y2 + 1);
+  const crop = { x: (Math.min(a[0], b[0]) - vx1) / vw, y: (Math.min(a[1], b[1]) - vy1) / vh, w: Math.abs(a[0] - b[0]) / vw, h: Math.abs(a[1] - b[1]) / vh };
+  const src = document.createElement('canvas'); src.width = r.x2 - r.x1 + 1; src.height = r.y2 - r.y1 + 1;
+  src.getContext('2d').drawImage(cv, r.x1, r.y1, src.width, src.height, 0, 0, src.width, src.height);
   doc.destroy();
-  return { key, toCrop, toRect, css };
+  return { crop, src, landscape: src.width > src.height * 1.08 };
 }
+/** Small picture of the cut label, turned `rot` degrees anticlockwise like it will print. */
+export function thumb(src, rot, maxH = 150) {
+  const q = ((rot % 360) + 360) % 360, side = q === 90 || q === 270;
+  const w0 = side ? src.height : src.width, h0 = side ? src.width : src.height, k = Math.min(1, maxH / h0);
+  const c = document.createElement('canvas'); c.width = Math.round(w0 * k); c.height = Math.round(h0 * k);
+  const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
+  g.translate(c.width / 2, c.height / 2); g.rotate(-q * Math.PI / 180); g.scale(k, k);
+  g.drawImage(src, -src.width / 2, -src.height / 2);
+  return c.toDataURL('image/png');
+}
+
+export const SIZES = { '100x150': { w: 283.46, h: 425.2, label: '100×150 mm' }, '100x100': { w: 283.46, h: 283.46, label: '100×100 mm' }, orig: { w: 0, h: 0, label: 'Tamaño real' } };
 
 /**
- * Cut page 1 to `crop` (fractions of its page box) and add a thin white strip on the edge that
- * is "up" when the label is viewed, with `text` in small letters. The label is never covered.
+ * One PDF, one label per page, ready for a label printer: each label is cut out of its PDF,
+ * turned upright, scaled to fit the label size and `text` goes in the white strip on top.
+ * items: [{ bytes, crop, rot, text }]
  */
-export async function stamp(bytes, text, crop) {
+export async function build(items, sizeKey = '100x150') {
   const { PDFDocument, StandardFonts, rgb, degrees } = await lib();
-  const doc = await PDFDocument.load(bytes, { ignoreEncryption: true });
-  const page = doc.getPage(0);
-  // only the first page is the label; drop instruction pages
-  while (doc.getPageCount() > 1) doc.removePage(1);
-  const font = await doc.embedFont(StandardFonts.HelveticaBold);
-  if (crop && crop.w > 0.02 && crop.h > 0.02) {
-    const cb = page.getCropBox();
-    const r = { x: cb.x + crop.x * cb.width, y: cb.y + crop.y * cb.height, w: crop.w * cb.width, h: crop.h * cb.height };
-    page.setMediaBox(r.x, r.y, r.w, r.h); page.setCropBox(r.x, r.y, r.w, r.h);
-    page.setTrimBox(r.x, r.y, r.w, r.h); page.setBleedBox(r.x, r.y, r.w, r.h); page.setArtBox(r.x, r.y, r.w, r.h);
-  }
-  if (!text) return doc.save();
-  const mb = page.getMediaBox();
-  const rot = ((page.getRotation().angle % 360) + 360) % 360;
-  const H = BAND, pad = 6;
-  let band;
-  if (rot === 90) { page.setMediaBox(mb.x - H, mb.y, mb.width + H, mb.height); band = { x: mb.x - H, y: mb.y, w: H, h: mb.height }; }
-  else if (rot === 180) { page.setMediaBox(mb.x, mb.y - H, mb.width, mb.height + H); band = { x: mb.x, y: mb.y - H, w: mb.width, h: H }; }
-  else if (rot === 270) { page.setMediaBox(mb.x, mb.y, mb.width + H, mb.height); band = { x: mb.x + mb.width, y: mb.y, w: H, h: mb.height }; }
-  else { page.setMediaBox(mb.x, mb.y, mb.width, mb.height + H); band = { x: mb.x, y: mb.y + mb.height, w: mb.width, h: H }; }
-  const nb = page.getMediaBox();
-  page.setCropBox(nb.x, nb.y, nb.width, nb.height); page.setTrimBox(nb.x, nb.y, nb.width, nb.height); page.setBleedBox(nb.x, nb.y, nb.width, nb.height); page.setArtBox(nb.x, nb.y, nb.width, nb.height);
-  const along = rot === 90 || rot === 270 ? band.h : band.w;
-  const size = Math.max(5, Math.min(8.5, (along - pad * 2) / font.widthOfTextAtSize(text, 1)));
-  const off = H / 2 - size * 0.35;
-  page.drawRectangle({ x: band.x, y: band.y, width: band.w, height: band.h, color: rgb(1, 1, 1) });
-  let box;
-  if (rot === 90) box = { x: band.x + H - off, y: band.y + pad, r: 90 };
-  else if (rot === 180) box = { x: band.x + band.w - pad, y: band.y + H - off, r: 180 };
-  else if (rot === 270) box = { x: band.x + off, y: band.y + band.h - pad, r: 270 };
-  else box = { x: band.x + pad, y: band.y + off, r: 0 };
-  page.drawText(text, { x: box.x, y: box.y, size, font, color: rgb(0, 0, 0), rotate: degrees(box.r) });
-  return doc.save();
-}
-
-/** One PDF with every label, in the order given. */
-export async function merge(list) {
-  const { PDFDocument } = await lib();
   const out = await PDFDocument.create();
-  for (const l of list) {
-    const src = await PDFDocument.load(l.bytes, { ignoreEncryption: true });
-    const pages = await out.copyPages(src, src.getPageIndices());
-    pages.forEach((p) => out.addPage(p));
+  const font = await out.embedFont(StandardFonts.HelveticaBold);
+  const T = 20, M = 6; // text strip on top, margin
+  for (const it of items) {
+    const src = await PDFDocument.load(it.bytes, { ignoreEncryption: true });
+    const sp = src.getPage(0), cb = sp.getCropBox(), c = it.crop || { x: 0, y: 0, w: 1, h: 1 };
+    const box = { left: cb.x + c.x * cb.width, bottom: cb.y + c.y * cb.height, right: cb.x + (c.x + c.w) * cb.width, top: cb.y + (c.y + c.h) * cb.height };
+    const emb = await out.embedPage(sp, box);
+    const cw = box.right - box.left, ch = box.top - box.bottom;
+    // the page's own /Rotate turns clockwise, our rot anticlockwise
+    const q = ((((it.rot || 0) - (sp.getRotation().angle || 0)) % 360) + 360) % 360, side = q === 90 || q === 270;
+    const ow = side ? ch : cw, oh = side ? cw : ch; // size once upright
+    const S = SIZES[sizeKey] || SIZES['100x150'];
+    const W = S.w || ow + M * 2, H = S.h || oh + T + M;
+    const s = Math.min((W - M * 2) / ow, (H - T - M) / oh);
+    const page = out.addPage([W, H]);
+    const L = (W - ow * s) / 2, B = M + (H - T - M - oh * s) / 2; // where the upright label sits
+    const w = cw * s, h = ch * s;
+    // pdf-lib turns the drawing anticlockwise around (x, y): place it so it lands on [L, B, ow*s, oh*s]
+    const at = { 0: { x: L, y: B }, 90: { x: L + h, y: B }, 180: { x: L + w, y: B + h }, 270: { x: L, y: B + w } }[q];
+    page.drawPage(emb, { x: at.x, y: at.y, width: w, height: h, rotate: degrees(q) });
+    if (it.text) {
+      const t = latin1(it.text), size = Math.min(11, (W - M * 2) / font.widthOfTextAtSize(t, 1));
+      page.drawText(t, { x: (W - font.widthOfTextAtSize(t, size)) / 2, y: H - T + (T - size) / 2 + 1, size, font, color: rgb(0, 0, 0) });
+    }
   }
   return out.save();
 }

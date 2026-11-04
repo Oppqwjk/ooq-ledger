@@ -48,7 +48,7 @@ const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
 
 const STATUS = { ganador: 'Ganador', test: 'Test', espera: 'En espera', descartado: 'Descartado' };
 const SORDER = { ganador: 0, test: 1, espera: 2, descartado: 3 };
-const APP_V = 'v38';
+const APP_V = 'v39';
 const CATS = { personal: ['Comida', 'Ocio', 'Ropa', 'Transporte', 'Móvil y subs', 'Ahorro / retiro personal', 'Otros'], negocio: ['Boost Vinted', 'Envíos', 'Fotos y material', 'Otros negocio'] };
 // what a goal can measure; everything except "manual" and "task" is read from your data automatically
 const METRICS = {
@@ -1668,159 +1668,131 @@ function periodSummary() {
     <tr class="tot"><th>Ritmo al mes</th><td class="n">${eur(w.run)}</td><td class="n">${eur(m.run)}</td></tr></tbody></table><div class="foot">Ritmo al mes: el beneficio de ese periodo llevado a un mes entero.</div>`);
 }
 
-/* ================= shipping labels: their own tab ================= */
-const LBQ = []; // PDFs waiting (kept while the app is open)
+/* ================= shipping labels: drop them all, they cut themselves ================= */
 const newId = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
 const pTxt = (p) => String(p).replace('.', ',');
-// view state: today's labels, choices for the label being prepared, and its preview
-const lbS = { today: [], loaded: false, err: '', model: null, acc: null, tag: null, crop: null, pv: null, pvFor: null, snap: null };
+// items: labels dropped and not printed yet (kept while the app is open); today: labels already made today
+const lbS = { items: [], today: [], loaded: false, err: '' };
 const byId = (id) => document.getElementById(id);
 const lv = (id) => { const e = byId(id); return e ? e.value.trim() : ''; };
 const lbErr = (t) => { lbS.err = t; const e = byId('lb-err'); if (e) e.textContent = t; };
 const lbTags = () => (Array.isArray(S0().labelTags) ? S0().labelTags : ['black-gold', 'green-gold']);
+const lbSize = () => (Lb.SIZES[lsGet('lg_lbsize', '100x150')] ? lsGet('lg_lbsize', '100x150') : '100x150');
+const lbLogSales = () => lsGet('lg_lblog', '1') === '1';
+const tagModel = () => S0().tagModel || {};
 const tagOf = (l) => l.tag || l.modelName;
 async function loadToday() {
   try { lbS.today = await Lb.ofDay(todayKey()); } catch (e) { lbS.err = 'No se pudieron leer las etiquetas: ' + (e.message || e); }
   lbS.loaded = true; renderSoon();
 }
-async function addLabelFiles(files) {
-  const pdfs = [...files].filter((f) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
-  if (!pdfs.length) { toast('Solo etiquetas en PDF'); return; }
-  for (const f of pdfs) LBQ.push({ name: f.name, bytes: new Uint8Array(await f.arrayBuffer()) });
-  if (st.tab !== 'etiquetas') setTab('etiquetas'); else renderSoon();
-}
-// quick prices: what this watch sold for most often lately, plus its listing price
+// quick price: what this watch sold for most often lately, else its listing price
 function priceChips(m) {
   if (!m) return [];
   const ss = L('sales').filter((x) => x.modelId === m.id && !x.cancelled).sort((a, b) => (b.at || b.date).localeCompare(a.at || a.date)).slice(0, 30);
   const freq = {}; ss.forEach((x) => { const p = r2(n0(x.price)); if (p > 0) freq[p] = (freq[p] || 0) + 1; });
   const ps = Object.entries(freq).sort((a, b) => b[1] - a[1] || Number(b[0]) - Number(a[0])).map(([p]) => Number(p)).slice(0, 5);
   const lp = num(m.listPrice); if (!isNaN(lp) && lp > 0 && !ps.includes(r2(lp))) ps.push(r2(lp));
-  return ps.slice(0, 6);
+  return ps;
 }
-function lbPriceRow(m) {
-  const ps = priceChips(m);
-  return ps.length ? ps.map((p, i) => `<button type="button" class="chip" data-a="lb-price" data-v="${p}" aria-pressed="${i === 0}">${eur(p)}</button>`).join('') : '';
+function itemDefaults(tag) {
+  const ms = pickModels(), tm = tagModel();
+  const mid = (tm[tag] && model(tm[tag]) && tm[tag]) || (model(lsGet('lg_lbmodel', '')) && lsGet('lg_lbmodel', '')) || (ms.find((m) => n0(m.home) > 0) || ms[0] || {}).id || '';
+  const accs = acctNames().concat(['Wallapop']), acc = accs.includes(lsGet('lg_lbacc', '')) ? lsGet('lg_lbacc', '') : brain().acc.mainName || accs[0];
+  const p = priceChips(model(mid))[0];
+  return { modelId: mid, acc, price: p ? pTxt(p) : '' };
 }
-function packList(list) {
-  const by = {}; list.forEach((l) => { const k = tagOf(l); by[k] = (by[k] || 0) + 1; });
-  return Object.entries(by).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+async function addLabelFiles(files) {
+  const pdfs = [...files].filter((f) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
+  if (!pdfs.length) { toast('Solo etiquetas en PDF'); return; }
+  const tags = lbTags(), tag = tags.includes(lsGet('lg_lbtag', '')) ? lsGet('lg_lbtag', '') : tags[0] || '';
+  const fresh = [];
+  for (const f of pdfs) {
+    const it = { id: newId(), name: f.name, bytes: new Uint8Array(await f.arrayBuffer()), status: 'reading', tag, rot: 0, ...itemDefaults(tag) };
+    lbS.items.push(it); fresh.push(it);
+  }
+  if (st.tab !== 'etiquetas') setTab('etiquetas'); else renderSoon();
+  for (const it of fresh) {
+    try { const a = await Lb.analyze(it.bytes); Object.assign(it, { crop: a.crop, src: a.src, rot: a.landscape ? 90 : 0, status: 'ready' }); it.img = Lb.thumb(it.src, it.rot); }
+    catch (e) { it.status = 'error'; it.error = e.message || String(e); }
+    renderSoon();
+  }
+}
+function lbRow(it, i, ms, accs, tags) {
+  const head2 = `<div class="lbth">${it.status === 'ready' ? `<img src="${it.img}" alt="">` : it.status === 'error' ? '<span class="neg sm2">PDF no válido</span>' : '<span class="mut sm2">recortando…</span>'}</div>`;
+  const sale = lbLogSales() ? `<div class="lbr-sel"><select data-lbf="modelId" data-i="${i}" aria-label="Reloj">${ms.map((m) => `<option value="${esc(m.id)}"${m.id === it.modelId ? ' selected' : ''}>${esc(m.name)}</option>`).join('')}</select>
+      <select data-lbf="acc" data-i="${i}" aria-label="Cuenta">${accs.map((a) => `<option${a === it.acc ? ' selected' : ''}>${esc(a)}</option>`).join('')}</select>
+      <input data-lbf="price" data-i="${i}" inputmode="decimal" value="${esc(it.price)}" placeholder="€" aria-label="Precio"></div>` : '';
+  return `<div class="lbrow${it.status === 'error' ? ' bad' : ''}">${head2}<div class="lbr-f"><div class="lbr-top"><b>#${i + 1}</b><span class="mut sm2">${esc(it.name)}</span></div>
+    <div class="chips">${tags.map((t) => `<button type="button" class="chip" data-a="lbi-tag" data-i="${i}" data-v="${esc(t)}" aria-pressed="${t === it.tag}">${esc(t)}</button>`).join('')}</div>${sale}</div>
+    <div class="lbr-x"><button type="button" class="iconbtn" data-a="lbi-rot" data-i="${i}" aria-label="Girar" title="Girar">↻</button><button type="button" class="del" data-a="lbi-del" data-i="${i}" aria-label="Quitar">×</button></div></div>`;
 }
 function viewLabels() {
   if (!lbS.loaded) loadToday();
-  const today = lbS.today, cur = LBQ[0], ms = pickModels(), accs = acctNames().concat(['Wallapop']);
-  const acc = accs.includes(lbS.acc) ? lbS.acc : accs.includes(lsGet('lg_lbacc', '')) ? lsGet('lg_lbacc', '') : brain().acc.mainName || accs[0];
-  const drop = `<label class="dropz${cur ? '' : ' big'}" id="lb-drop"><input type="file" id="lb-file" accept="application/pdf,.pdf" multiple hidden><b>${cur ? '+ Añadir más PDF' : 'Arrastra aquí las etiquetas de Vinted'}</b><span>${cur ? `${LBQ.length} en cola` : 'o toca para elegir los PDF que has descargado'}</span></label>`;
-  let form = '';
-  if (cur && !ms.length) form = empty('Primero crea un reloj en Stock → + Reloj.');
-  else if (cur) {
-    const mid = lbS.model && model(lbS.model) ? lbS.model : (ms.find((m) => n0(m.home) > 0) || ms[0]).id;
-    const tags = lbTags(), tag = lbS.tag !== null ? lbS.tag : lsGet('lg_lbtag_' + mid, tags[0] || '');
-    const ps = priceChips(model(mid));
-    form = `<section class="panel lbform"><div class="ph"><span>Etiqueta ${today.length + 1} · 1 de ${LBQ.length} en cola</span><span class="ph-r mut sm2">${esc(cur.name)}</span></div>
-      <div class="lbgrid">
-        <div class="lbcut"><div class="lb">1 · Marca la parte que se imprime</div>
-          <div class="cutwrap" id="lb-cut"><canvas id="lb-cv"></canvas><div class="cutbox" id="lb-box" hidden></div></div>
-          <div class="chips">${[['full', 'Entera'], ['top', 'Mitad de arriba'], ['tl', 'Arriba izquierda'], ['tr', 'Arriba derecha']].map(([v, l]) => `<button type="button" class="chip" data-a="lb-preset" data-v="${v}">${l}</button>`).join('')}</div>
-          <div class="hint">Arrastra sobre la etiqueta. El recorte se recuerda para las siguientes del mismo tipo.</div></div>
-        <div class="lbfields">
-          <div class="field"><span class="lb">2 · Color (se escribe en la etiqueta)</span><input type="hidden" id="lb-tag" value="${esc(tag)}">
-            <div class="chips" id="lb-tags">${tags.map((t) => `<span class="tagchip"><button type="button" class="chip" data-a="lb-tag" data-v="${esc(t)}" aria-pressed="${t === tag}">${esc(t)}</button><button type="button" class="tagx" data-a="lb-tagdel" data-v="${esc(t)}" aria-label="Quitar ${esc(t)}">×</button></span>`).join('')}</div>
-            <div class="addtag"><input id="lb-newtag" placeholder="otro color, ej. blue-silver" maxlength="24"><button type="button" class="btn-o" data-a="lb-tagadd">Añadir</button></div></div>
-          <div class="field"><span class="lb">3 · Reloj vendido</span>${watchPicker('lb-model', mid, ms)}</div>
-          <div class="field"><span class="lb">4 · Cuenta</span><input type="hidden" id="lb-acc" value="${esc(acc)}"><div class="chips">${accs.map((a) => `<button type="button" class="chip" data-a="lb-acc" data-v="${esc(a)}" aria-pressed="${a === acc}">${esc(a)}</button>`).join('')}</div></div>
-          <div class="field"><label for="lb-price">5 · Precio final (€)</label><div class="chips" id="lb-pchips">${lbPriceRow(model(mid))}</div><input id="lb-price" inputmode="decimal" value="${ps.length ? pTxt(ps[0]) : ''}" placeholder="19,50"></div>
-          <div class="checks"><label class="check"><input type="checkbox" id="lb-pouch"${lsGet('lg_pouch', '1') === '1' ? ' checked' : ''}> Con bolsita</label><label class="check"><input type="checkbox" id="lb-boost"${lsGet('lg_boost', '1') === '1' ? ' checked' : ''}> Con boost</label></div>
-          <div class="err" id="lb-err">${esc(lbS.err)}</div>
-          <button class="primary" data-a="lb-save">Guardar venta y preparar etiqueta</button>
-          <div class="btnrow"><button class="btn-o" data-a="lb-only">Solo preparar (venta ya apuntada)</button><button class="ghost" data-a="lb-skip">Quitar este PDF</button></div>
-        </div></div></section>`;
-  }
-  const pk = packList(today);
-  const batch = today.length ? panel(`Hoy · ${today.length} etiqueta${today.length === 1 ? '' : 's'}`, `<div class="lb-pack">${pk.map(([n, c]) => `<div class="kv"><span>${esc(n)}</span><b>${c}×</b></div>`).join('')}</div>
-      <div class="stack pad"><button class="primary" data-a="lb-merge">Descargar las ${today.length} en un PDF para imprimir</button></div>
-      <table class="xl list"><tbody>${today.map((l) => `<tr><td>#${l.n} ${esc(tagOf(l))}<span class="sub">${esc(l.modelName)} · ${esc(l.account)}${l.price ? ' · ' + eur(n0(l.price)) : ''}</span></td><td class="x" style="width:auto;padding:0 6px"><button class="cellbtn" data-a="lb-one" data-id="${esc(l.id)}">PDF</button></td><td class="x"><button class="del" data-a="lb-del" data-id="${esc(l.id)}" aria-label="Quitar etiqueta">×</button></td></tr>`).join('')}</tbody></table>
-      <div class="foot">Ordenadas por color. Quitar una etiqueta no borra la venta. Se guardan en este dispositivo 14 días.</div>`)
-    : (cur ? '' : `<div class="hint lbhelp">Cada PDF sale recortado a la etiqueta con el color escrito en pequeño arriba, y la venta queda apuntada (resta 1 del stock). Al final, un botón te da todas las de hoy en un solo PDF.</div>`);
-  return `<div class="toolbar"><div class="ttl">Etiquetas</div><span class="mut sm2">${shortDate(todayKey())}</span></div><div class="lbview">${drop}${form}${batch}</div>`;
+  const items = lbS.items, today = lbS.today, ms = pickModels(), accs = acctNames().concat(['Wallapop']), tags = lbTags(), size = lbSize();
+  const drop = `<label class="dropz${items.length ? '' : ' big'}" id="lb-drop"><input type="file" id="lb-file" accept="application/pdf,.pdf" multiple hidden><b>${items.length ? '+ Añadir más' : 'Arrastra aquí todas las etiquetas de Vinted'}</b><span>${items.length ? 'se recortan solas' : 'o toca para elegirlas · se recortan solas, sin hoja en blanco'}</span></label>`;
+  const opts = `<div class="lbopts"><div class="seg sm">${Object.entries(Lb.SIZES).map(([k, v]) => `<button data-a="lb-size" data-v="${k}" aria-pressed="${k === size}">${v.label}</button>`).join('')}</div>
+    <label class="check"><input type="checkbox" id="lb-log"${lbLogSales() ? ' checked' : ''}> Apuntar las ventas</label>
+    <details class="lbtags"><summary>Colores (${tags.length})</summary><div class="chips">${tags.map((t) => `<span class="tagchip"><span class="chip">${esc(t)}</span><button type="button" class="tagx" data-a="lb-tagdel" data-v="${esc(t)}" aria-label="Quitar ${esc(t)}">×</button></span>`).join('')}</div>
+      <div class="addtag"><input id="lb-newtag" placeholder="nuevo color, ej. blue-silver" maxlength="24"><button type="button" class="btn-o" data-a="lb-tagadd">Añadir</button></div></details></div>`;
+  const ready = items.filter((x) => x.status === 'ready').length, busy = items.some((x) => x.status === 'reading');
+  const list = items.length ? panel(`${items.length} etiqueta${items.length === 1 ? '' : 's'} para imprimir`, `${opts}<div class="lbrows">${items.map((it, i) => lbRow(it, i, ms, accs, tags)).join('')}</div>
+      <div class="stack pad"><div class="err" id="lb-err">${esc(lbS.err)}</div><button class="primary" data-a="lb-go"${busy || !ready ? ' disabled' : ''}>${busy ? 'Recortando…' : `Descargar ${ready} etiqueta${ready === 1 ? '' : 's'} (${Lb.SIZES[size].label})`}</button>
+      <div class="hint">Un PDF con una etiqueta por página, listo para la impresora de etiquetas. El color sale escrito arriba en el hueco blanco.${lbLogSales() ? ' Cada venta se apunta y resta 1 del stock.' : ''}</div></div>`, '<button class="lnk" data-a="lb-clear">Vaciar</button>') : '';
+  const pk = {}; today.forEach((l) => { const k = tagOf(l); pk[k] = (pk[k] || 0) + 1; });
+  const done2 = today.length ? panel(`Hechas hoy · ${today.length}`, `<div class="lb-pack">${Object.entries(pk).sort((a, b) => b[1] - a[1]).map(([n, c]) => `<div class="kv"><span>${esc(n)}</span><b>${c}×</b></div>`).join('')}</div>
+      <div class="stack pad"><button class="btn-o" data-a="lb-again">Descargar otra vez las ${today.length} de hoy</button></div>`) : '';
+  return `<div class="toolbar"><div class="ttl">Etiquetas</div><span class="mut sm2">${shortDate(todayKey())}</span></div><div class="lbview">${drop}${list}${done2}</div>`;
 }
-// after the tab is drawn: file input, drop zone, the preview and its crop box
-async function afterLabels() {
-  const lf = byId('lb-file'); if (lf) lf.addEventListener('change', () => addLabelFiles(lf.files));
+function afterLabels() {
+  const lf = byId('lb-file'); if (lf) lf.addEventListener('change', () => { addLabelFiles(lf.files); lf.value = ''; });
   const dz = byId('lb-drop');
   if (dz) {
     ['dragenter', 'dragover'].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add('over'); }));
     dz.addEventListener('dragleave', () => dz.classList.remove('over'));
     dz.addEventListener('drop', (e) => { e.preventDefault(); e.stopPropagation(); dz.classList.remove('over'); addLabelFiles(e.dataTransfer.files); });
   }
-  const lm = byId('lb-model');
-  if (lm) lm.addEventListener('change', () => {
-    const m = model(lm.value), ps = priceChips(m); lbS.model = lm.value;
-    byId('lb-pchips').innerHTML = lbPriceRow(m); byId('lb-price').value = ps.length ? pTxt(ps[0]) : '';
-    const saved = lsGet('lg_lbtag_' + lm.value, null); if (saved !== null && lbTags().includes(saved)) setTag(saved);
-  });
-  const cur = LBQ[0], cv = byId('lb-cv'), wrap = byId('lb-cut');
-  if (!cur || !cv || !wrap) return;
-  const w = Math.max(220, Math.min(wrap.clientWidth || 360, 460));
-  try {
-    if (lbS.pvFor === cur && lbS.snap && lbS.pv) { // already drawn once: copy the picture instead of reading the PDF again
-      cv.width = lbS.snap.width; cv.height = lbS.snap.height; cv.style.width = lbS.pv.css.w + 'px'; cv.style.height = lbS.pv.css.h + 'px';
-      cv.getContext('2d').drawImage(lbS.snap, 0, 0);
-    } else {
-      const pv = await Lb.preview(cur.bytes, cv, w);
-      if (!document.body.contains(cv)) return;
-      const snap = document.createElement('canvas'); snap.width = cv.width; snap.height = cv.height; snap.getContext('2d').drawImage(cv, 0, 0);
-      Object.assign(lbS, { pv, pvFor: cur, snap });
-      if (!lbS.crop) lbS.crop = (S0().labelCrops || {})[pv.key] || { x: 0, y: 0, w: 1, h: 1 };
+  const lg = byId('lb-log'); if (lg) lg.addEventListener('change', () => { lsSet('lg_lblog', lg.checked ? '1' : '0'); renderSoon(); });
+  document.querySelectorAll('[data-lbf]').forEach((el) => el.addEventListener('change', async () => {
+    const it = lbS.items[Number(el.dataset.i)]; if (!it) return;
+    it[el.dataset.lbf] = el.value;
+    if (el.dataset.lbf === 'modelId') {
+      const p = priceChips(model(el.value))[0]; if (p) it.price = pTxt(p);
+      if (it.tag) await patchSettings({ tagModel: { ...tagModel(), [it.tag]: el.value } }); // this colour is this watch from now on
+      renderSoon();
     }
-  } catch (e) { lbErr('No se puede leer este PDF: ' + (e.message || e)); return; }
-  drawCut();
-  let start = null;
-  const at = (e) => { const r = cv.getBoundingClientRect(); return { x: Math.max(0, Math.min(r.width, e.clientX - r.left)), y: Math.max(0, Math.min(r.height, e.clientY - r.top)) }; };
-  wrap.addEventListener('pointerdown', (e) => { start = at(e); wrap.setPointerCapture(e.pointerId); e.preventDefault(); });
-  wrap.addEventListener('pointermove', (e) => { if (!start) return; const p = at(e); showBox({ l: Math.min(start.x, p.x), t: Math.min(start.y, p.y), w: Math.abs(p.x - start.x), h: Math.abs(p.y - start.y) }); });
-  const end = (e) => { if (!start) return; const p = at(e), r = { l: Math.min(start.x, p.x), t: Math.min(start.y, p.y), w: Math.abs(p.x - start.x), h: Math.abs(p.y - start.y) }; start = null; if (r.w > 16 && r.h > 16) lbS.crop = lbS.pv.toCrop(r); drawCut(); };
-  wrap.addEventListener('pointerup', end); wrap.addEventListener('pointercancel', () => { start = null; drawCut(); });
+  }));
 }
-function showBox(r) { const b = byId('lb-box'); if (!b) return; Object.assign(b.style, { left: r.l + 'px', top: r.t + 'px', width: r.w + 'px', height: r.h + 'px' }); b.hidden = false; }
-function drawCut() { if (lbS.pv && lbS.crop) showBox(lbS.pv.toRect(lbS.crop)); }
-function setTag(t) {
-  lbS.tag = t; const inp = byId('lb-tag'); if (inp) inp.value = t;
-  document.querySelectorAll('[data-a="lb-tag"]').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.v === t)));
-}
-function cropPreset(v) {
-  if (!lbS.pv) return; const { w, h } = lbS.pv.css;
-  const r = { full: { l: 0, t: 0, w, h }, top: { l: 0, t: 0, w, h: h / 2 }, tl: { l: 0, t: 0, w: w / 2, h: h / 2 }, tr: { l: w / 2, t: 0, w: w / 2, h: h / 2 } }[v];
-  if (r) { lbS.crop = lbS.pv.toCrop(r); drawCut(); }
-}
-async function saveLabel(withSale) {
-  const cur = LBQ[0]; if (!cur) return;
-  const m = model(lv('lb-model')), acc = lv('lb-acc'), tag = lv('lb-tag'), price = num(lv('lb-price')), t = todayKey();
-  if (!m) return lbErr('Elige el reloj.');
-  if (!acc) return lbErr('Elige la cuenta.');
-  if (withSale && !(price > 0)) return lbErr('Pon el precio final.');
-  const n = (await Lb.ofDay(t)).reduce((x, l) => Math.max(x, n0(l.n)), 0) + 1;
-  let bytes;
-  try { bytes = await Lb.stamp(cur.bytes, Lb.headerText({ n, tag: tag || m.name }), lbS.crop); } catch (e) { return lbErr('No se puede editar este PDF (' + (e.message || e) + '). Quítalo y descarga la etiqueta otra vez.'); }
-  if (lbS.pv && lbS.crop) await patchSettings({ labelCrops: { ...(S0().labelCrops || {}), [lbS.pv.key]: lbS.crop } }); // remember this cut for the same kind of PDF
-  let res = null;
-  if (withSale) {
-    const pouch = byId('lb-pouch').checked, boost = byId('lb-boost').checked;
-    lsSet('lg_pouch', pouch ? '1' : '0'); lsSet('lg_boost', boost ? '1' : '0');
-    res = await recordSale({ m, price, cost: NaN, acc, date: t, pouch, boost, soldAt: nowISO() });
+// make the print file: cut + upright + colour on top, one label per page; log the sales if asked
+async function printLabels() {
+  const items = lbS.items.filter((x) => x.status === 'ready'), log = lbLogSales(), t = todayKey();
+  if (!items.length) return lbErr('No hay etiquetas listas.');
+  if (log) for (const [i, it] of items.entries()) {
+    if (!model(it.modelId)) return lbErr(`Etiqueta #${lbS.items.indexOf(it) + 1}: elige el reloj.`);
+    if (!(num(it.price) > 0)) return lbErr(`Etiqueta #${lbS.items.indexOf(it) + 1}: pon el precio.`);
   }
-  await Lb.put({ id: newId(), day: t, n, at: nowISO(), saleId: res ? res.sale.id : null, modelId: m.id, modelName: m.name, tag: tag || '', account: acc, price: res ? r2(price) : null, name: cur.name, bytes });
-  lsSet('lg_lbacc', acc); if (tag) lsSet('lg_lbtag_' + m.id, tag);
-  LBQ.shift();
-  Object.assign(lbS, { model: m.id, acc, tag: null, crop: null, pv: null, pvFor: null, snap: null, err: '' });
-  toast(`#${n} lista${tag ? ' · ' + tag : ''}${res && res.profit !== null ? ' · ' + eur(res.profit, true) : ''}`);
+  let n = (await Lb.ofDay(t)).reduce((x, l) => Math.max(x, n0(l.n)), 0);
+  const made = items.map((it) => ({ it, n: ++n })).sort((a, b) => (a.it.tag || '').localeCompare(b.it.tag || '') || a.n - b.n);
+  const text = (x) => `#${x.n} · ${x.it.tag || (model(x.it.modelId) || {}).name || ''}`;
+  let pdf;
+  try { pdf = await Lb.build(made.map((x) => ({ bytes: x.it.bytes, crop: x.it.crop, rot: x.it.rot, text: text(x) })), lbSize()); } catch (e) { return lbErr('No se pudo crear el PDF: ' + (e.message || e)); }
+  Lb.download(pdf, `ETIQUETAS_${t}.pdf`);
+  const pouch = lsGet('lg_pouch', '1') === '1', boost = lsGet('lg_boost', '1') === '1';
+  for (const x of made) {
+    const m = model(x.it.modelId); let res = null;
+    if (log && m) res = await recordSale({ m, price: num(x.it.price), cost: NaN, acc: x.it.acc, date: t, pouch, boost, soldAt: nowISO() });
+    await Lb.put({ id: newId(), day: t, n: x.n, at: nowISO(), saleId: res ? res.sale.id : null, modelId: m ? m.id : null, modelName: m ? m.name : '', tag: x.it.tag || '', account: x.it.acc || '', price: res ? r2(num(x.it.price)) : null, name: x.it.name, bytes: x.it.bytes, crop: x.it.crop, rot: x.it.rot });
+    if (m) lsSet('lg_lbmodel', m.id);
+    if (x.it.acc) lsSet('lg_lbacc', x.it.acc);
+  }
+  const by = {}; made.forEach((x) => { const k = x.it.tag || '—'; by[k] = (by[k] || 0) + 1; });
+  lbS.items = lbS.items.filter((x) => !items.includes(x)); lbS.err = '';
+  toast('Listo · empaqueta ' + Object.entries(by).map(([k, c]) => `${c}× ${k}`).join(', '));
   await loadToday();
 }
-async function mergeLabels() {
+async function printAgain() {
   const list = (await Lb.ofDay(todayKey())).sort((a, b) => tagOf(a).localeCompare(tagOf(b)) || a.n - b.n);
-  if (!list.length) return lbErr('Hoy no hay etiquetas.');
-  try { Lb.download(await Lb.merge(list), `IMPRIMIR_HOY_${todayKey()}.pdf`); } catch (e) { return lbErr('No se pudieron unir: ' + (e.message || e)); }
-  toast('Empaqueta: ' + packList(list).map(([n, c]) => `${c}× ${n}`).join(', '));
+  if (!list.length) return;
+  Lb.download(await Lb.build(list.map((l) => ({ bytes: l.bytes, crop: l.crop, rot: l.rot || 0, text: `#${l.n} · ${tagOf(l)}` })), lbSize()), `ETIQUETAS_${todayKey()}.pdf`);
 }
 
 /* ---------------- sheets ---------------- */
@@ -2729,7 +2701,7 @@ function exportBackup() {
 /* ---------------- events ---------------- */
 const SAVE = { 'save-orphans': saveOrphans, 'save-sale': saveSale, 'save-order': saveOrder, 'save-receive': saveReceive, 'save-spend': saveSpend, 'save-income': saveIncome, 'save-model': saveModel, 'save-settings': saveSettings, 'save-bill': saveBill, 'save-goal': saveGoal,
   'save-snap': saveSnap, 'save-withdraw': saveWithdraw, 'save-catchup': saveCatchup, 'save-newtest': saveNewTest, 'save-listing': saveListing, 'save-acc': saveAcc, 'save-plan': savePlan, 'save-debt': saveDebt, 'save-order-edit': saveOrderEdit, 'save-boostwaste': saveBoostWaste,
-  'save-sadaqah': saveSadaqah, 'save-buckets': saveBuckets, 'save-ladder': saveLadder, 'lb-save': () => saveLabel(true), 'lb-only': () => saveLabel(false), 'lb-merge': mergeLabels };
+  'save-sadaqah': saveSadaqah, 'save-buckets': saveBuckets, 'save-ladder': saveLadder, 'lb-go': printLabels, 'lb-again': printAgain };
 function setTab(v) { st.tab = v; lsSet('lg_tab', v); if (location.hash.slice(1) !== v) history.replaceState(null, '', '#' + v); window.scrollTo(0, 0); renderSoon(); }
 document.addEventListener('click', async (e) => {
   if (e.target === sheetEl) { closeSheet(); return; }
@@ -2745,19 +2717,13 @@ document.addEventListener('click', async (e) => {
   switch (a) {
     case 'tab': if (st.sheet) closeSheet(); setTab(v); break;
     case 'labels': setTab('etiquetas'); break;
-    case 'lb-acc': case 'lb-price': {
-      const inp = byId(a); if (!inp) break;
-      inp.value = a === 'lb-price' ? pTxt(v) : v; if (a === 'lb-acc') lbS.acc = v;
-      document.querySelectorAll(`[data-a="${a}"]`).forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
-      break;
-    }
-    case 'lb-tag': setTag(v); break;
-    case 'lb-tagadd': { const t = lv('lb-newtag').toLowerCase().replace(/\s+/g, '-').replace(/[^\w\u00C0-\u00FF-]/g, ''); if (!t) break; const ts = lbTags(); if (!ts.includes(t)) await patchSettings({ labelTags: [...ts, t] }); lbS.tag = t; renderSoon(); break; }
-    case 'lb-tagdel': { await patchSettings({ labelTags: lbTags().filter((x) => x !== v) }); if (lbS.tag === v) lbS.tag = null; break; }
-    case 'lb-preset': cropPreset(v); break;
-    case 'lb-skip': LBQ.shift(); Object.assign(lbS, { crop: null, pv: null, pvFor: null, snap: null, err: '' }); renderSoon(); break;
-    case 'lb-del': await Lb.remove(b.dataset.id); toast('Etiqueta quitada · la venta sigue apuntada'); await loadToday(); break;
-    case 'lb-one': { const l = lbS.today.find((x) => x.id === b.dataset.id); if (l) Lb.download(l.bytes, `etiqueta-${l.n}-${tagOf(l)}.pdf`.replace(/[^\w.-]+/g, '_')); break; }
+    case 'lbi-tag': { const it = lbS.items[Number(b.dataset.i)]; if (!it) break; it.tag = v; lsSet('lg_lbtag', v); const mid = tagModel()[v]; if (mid && model(mid)) { it.modelId = mid; const p = priceChips(model(mid))[0]; if (p) it.price = pTxt(p); } renderSoon(); break; }
+    case 'lbi-rot': { const it = lbS.items[Number(b.dataset.i)]; if (it && it.src) { it.rot = (it.rot + 90) % 360; it.img = Lb.thumb(it.src, it.rot); renderSoon(); } break; }
+    case 'lbi-del': lbS.items.splice(Number(b.dataset.i), 1); renderSoon(); break;
+    case 'lb-clear': lbS.items = []; lbS.err = ''; renderSoon(); break;
+    case 'lb-size': lsSet('lg_lbsize', v); renderSoon(); break;
+    case 'lb-tagadd': { const t = lv('lb-newtag').toLowerCase().replace(/\s+/g, '-').replace(/[^\w\u00C0-\u00FF-]/g, ''); if (!t) break; const ts = lbTags(); if (!ts.includes(t)) await patchSettings({ labelTags: [...ts, t] }); break; }
+    case 'lb-tagdel': await patchSettings({ labelTags: lbTags().filter((x) => x !== v) }); break;
     case 'dtarget': await patchSettings({ dailyTarget: Number(v) }); break;
     case 'ld-paid': { const p = { ...(S0().ladderPaid || {}) }; p[v] = !p[v]; await patchSettings({ ladderPaid: p }); break; }
     case 'ladder': openSheet('ladder'); break;
