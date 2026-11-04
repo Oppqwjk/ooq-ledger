@@ -2,7 +2,7 @@
   "name": "OOQ Ledger",
   "short_name": "OOQ Ledger",
   "description": "Caja, pedidos, stock y metas del negocio de relojes.",
-  "start_url": "./#inicio",
+  "start_url": "./#calendario",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait-primary",

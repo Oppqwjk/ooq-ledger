@@ -1,8 +1,8 @@
 // Offline cache. Bump VERSION on every deploy so installed apps pick up new files.
-const VERSION = 'ledger-v37';
+const VERSION = 'ledger-v38';
 const SHELL = [
   './', './index.html', './config.js', './manifest.webmanifest', './css/app.css',
-  './js/app.js', './js/brain.js', './js/plan.js', './js/agent.js', './js/db.js', './js/sync.js', './js/loader.js', './js/labels.js', './vendor/supabase.js', './vendor/pdf-lib.min.js',
+  './js/app.js', './js/brain.js', './js/plan.js', './js/agent.js', './js/db.js', './js/sync.js', './js/loader.js', './js/labels.js', './vendor/supabase.js', './vendor/pdf-lib.min.js', './vendor/pdf.min.js', './vendor/pdf.worker.min.js',
   './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png',
 ];
 const CDN_HOSTS = ['fonts.googleapis.com', 'fonts.gstatic.com'];

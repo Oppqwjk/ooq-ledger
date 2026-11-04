@@ -48,7 +48,7 @@ const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
 
 const STATUS = { ganador: 'Ganador', test: 'Test', espera: 'En espera', descartado: 'Descartado' };
 const SORDER = { ganador: 0, test: 1, espera: 2, descartado: 3 };
-const APP_V = 'v37';
+const APP_V = 'v38';
 const CATS = { personal: ['Comida', 'Ocio', 'Ropa', 'Transporte', 'Móvil y subs', 'Ahorro / retiro personal', 'Otros'], negocio: ['Boost Vinted', 'Envíos', 'Fotos y material', 'Otros negocio'] };
 // what a goal can measure; everything except "manual" and "task" is read from your data automatically
 const METRICS = {
@@ -248,12 +248,13 @@ const acctNames = () => S0().accounts || [];
 const liveOf = (mid) => L('listings').filter((l) => l.modelId === mid && l.status === 'live');
 
 /* ---------------- state ---------------- */
-const TABS = [['inicio', 'Hoy'], ['calendario', 'Ventas'], ['stock', 'Stock'], ['gastos', 'Dinero'], ['tests', 'Tests'], ['anuncios', 'Anuncios'], ['metas', 'Objetivos'], ['cuentas', 'Cuentas']];
-const BAR = ['inicio', 'calendario', 'stock', 'gastos']; // Tests from Stock; Objetivos from Hoy; Anuncios and Cuentas live in Ajustes
-const TOPBAR = [...BAR.slice(0, 2), 'metas', ...BAR.slice(2)]; // desktop: Objetivos as its own tab
+const TABS = [['inicio', 'Hoy'], ['calendario', 'P&L'], ['etiquetas', 'Etiquetas'], ['stock', 'Stock'], ['gastos', 'Dinero'], ['tests', 'Tests'], ['anuncios', 'Anuncios'], ['metas', 'Objetivos'], ['cuentas', 'Cuentas']];
+const BAR = ['calendario', 'etiquetas', 'stock', 'metas']; // the 4 things that matter; Dinero from P&L, the rest from Ajustes
+const TOPBAR = BAR;
 const ICONS = {
   inicio: '<path d="M4 11 12 4.5l8 6.5v8.5a1.5 1.5 0 0 1-1.5 1.5H15v-6h-6v6H5.5A1.5 1.5 0 0 1 4 19.5z"/>',
   manager: '<path d="M5 5.5h14a1.5 1.5 0 0 1 1.5 1.5v9a1.5 1.5 0 0 1-1.5 1.5h-7.5L7 21v-3.5H5A1.5 1.5 0 0 1 3.5 16V7A1.5 1.5 0 0 1 5 5.5z"/><path d="M8.5 11.5h.01M12 11.5h.01M15.5 11.5h.01"/>',
+  etiquetas: '<path d="M6 3.5h12a1.5 1.5 0 0 1 1.5 1.5v14a1.5 1.5 0 0 1-1.5 1.5H6A1.5 1.5 0 0 1 4.5 19V5A1.5 1.5 0 0 1 6 3.5z"/><path d="M8 8h8M8 11.5h8M8 15h4"/>',
   calendario: '<rect x="3.5" y="5" width="17" height="15.5" rx="3.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
   stock: '<path d="M3.5 8 12 3.5 20.5 8v8L12 20.5 3.5 16z"/><path d="M3.5 8 12 12.5 20.5 8M12 12.5v8"/>',
   tests: '<path d="M9.5 3.5h5M10.5 3.5v5.5L5.2 18a1.7 1.7 0 0 0 1.5 2.5h10.6a1.7 1.7 0 0 0 1.5-2.5L13.5 9V3.5"/><path d="M7.5 14.5h9"/>',
@@ -263,7 +264,7 @@ const ICONS = {
   anuncios: '<path d="M3.5 12.2V4.8a1.3 1.3 0 0 1 1.3-1.3h7.4l8.3 8.3a1.5 1.5 0 0 1 0 2.1l-6.3 6.3a1.5 1.5 0 0 1-2.1 0z"/><circle cx="8.3" cy="8.3" r="1.6"/>',
 };
 const st = {
-  tab: (location.hash.slice(1) && TABS.some((t) => t[0] === location.hash.slice(1))) ? location.hash.slice(1) : 'inicio',
+  tab: (location.hash.slice(1) && location.hash.slice(1) !== 'inicio' && TABS.some((t) => t[0] === location.hash.slice(1))) ? location.hash.slice(1) : 'calendario',
   month: curMonth(), selDay: todayKey(), calMode: lsGet('lg_cal', 'profit'), stockSeg: lsGet('lg_seg', 'relojes'), filter: lsGet('lg_filter', 'activos'),
   confirm: null, sheet: null, stockMore: lsGet('lg_more', '0') === '1',
   chatBusy: false, chatErr: '', chatImgs: [], chatLive: [], aiSetup: false, briefNew: false, aiMovesBusy: false, aiMovesErr: '',
@@ -312,7 +313,7 @@ function renderSoon() { if (rq) return; rq = true; requestAnimationFrame(() => {
 function render() {
   const main = $('#main'); if (!main) return;
   document.querySelectorAll('[data-a="tab"]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === st.tab)));
-  const v = { inicio: viewToday, calendario: viewPnl, stock: viewStock2, anuncios: viewListings, tests: viewTests2, cuentas: viewAccounts, gastos: viewSpend, metas: viewGoals }[st.tab] || viewToday;
+  const v = { inicio: viewPnl, etiquetas: viewLabels, calendario: viewPnl, stock: viewStock2, anuncios: viewListings, tests: viewTests2, cuentas: viewAccounts, gastos: viewSpend, metas: viewGoals }[st.tab] || viewToday;
   document.querySelectorAll('.tabbar [data-a="tab"], .toptabs [data-a="tab"]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === st.tab || (b.dataset.v === 'stock' && st.tab === 'tests') || (b.dataset.v === 'inicio' && st.tab === 'metas' && !!b.closest('.tabbar')))));
   brainCache = null;
   const chat = st.tab === 'manager' && !!agent.key() && !st.aiSetup;
@@ -321,6 +322,7 @@ function render() {
   document.querySelectorAll('[data-a="tab"][data-v="manager"]').forEach((b) => b.classList.toggle('dot', st.briefNew && st.tab !== 'manager'));
   if (st.tab === 'manager') st.briefNew = false;
   main.innerHTML = v();
+  if (st.tab === 'etiquetas') afterLabels();
   if (st.tab !== render._tab) { render._tab = st.tab; main.classList.remove('enter'); void main.offsetWidth; main.classList.add('enter'); clearTimeout(render._t); render._t = setTimeout(() => main.classList.remove('enter'), 900); }
   labelTables(main);
   if (chat) { const box = $('#chatlog'); if (box) window.scrollTo(0, document.body.scrollHeight); }
@@ -918,7 +920,7 @@ function viewToday() {
 function viewPnlSimple() {
   const mk = st.month, a = monthStats(mk), g = goalFor(mk), fix = salesToFix().length;
   const tile = (lbl, big, sub, c2 = '') => `<div class="kpi ${c2}"><span class="k-l">${lbl}</span><b class="k-v">${big}</b><span class="k-s">${sub}</span></div>`;
-  return `<div class="toolbar">${mnav()}<div class="tb-r"><button class="btn-g" data-a="add" data-mode="venta" data-date="${st.selDay}">+ Venta</button><button class="btn-o" data-a="labels">Etiquetas</button><button class="ghost" data-a="stock-more">Ver más</button></div></div>
+  return `<div class="toolbar">${mnav()}<div class="tb-r"><button class="btn-g" data-a="add" data-mode="venta" data-date="${st.selDay}">+ Venta</button><button class="btn-o" data-a="tab" data-v="gastos">Dinero</button><button class="ghost" data-a="stock-more">Ver más</button></div></div>
     ${fix ? `<div class="alerts"><button class="alert" data-a="orphans"><b>${fix} venta${fix === 1 ? '' : 's'} sin reloj o sin coste</b><span>toca para arreglarlas</span></button></div>` : ''}
     <div class="kpis k3">${tile('Beneficio', `<span class="${a.net < 0 ? 'neg' : ''}">${eur(a.net)}</span>`, `${pbar(a.net / g, a.net >= g ? 'won' : '')}<span>${Math.max(0, Math.round(a.net / g * 100))}% de ${eur(g)}</span>`, 'hero')}${tile('Ventas', String(a.n), `vendido ${eur(a.rev)}`)}${tile('Ticket medio', eur(a.ticket), 'por venta')}</div>
     <div class="g2 pnl"><div class="col"><div class="o1">${panel('Beneficio por día', calGrid2(mk))}</div></div><div class="col"><div class="o2">${dayPanel2()}</div><div class="o3">${periodSummary()}</div></div></div>`;
@@ -1514,20 +1516,14 @@ function planTable() {
   }).join('')}</tbody></table></div><div class="foot">Si no llegas al mínimo de un mes, no se abre cuenta nueva el siguiente: primero se arregla lo que falla.</div>` : empty('Sin plan mensual.');
 }
 function viewGoals() {
-  const cm = curMonth(), a = monthStats(cm), g = goalFor(cm), pz = brain().pace, pc = planOf(cm);
-  const day = new Date().getDate(), left = daysIn(cm) - day + 1, rest = g - a.net;
-  const projNet = day >= 3 ? a.net / day * daysIn(cm) : null;
-  const tile = (lbl, big, sub, c2 = '') => `<div class="kpi ${c2}"><span class="k-l">${lbl}</span><b class="k-v">${big}</b><span class="k-s">${sub}</span></div>`;
-  const T = pc && n0(pc.sales) ? n0(pc.sales) : 0, needS = T ? Math.max(0, T - a.n) / left : 0;
-  const k = `<div class="kpis k3">
-    ${tile('Objetivo de ' + MONTHS[pm(cm).m - 1], `<span class="${a.net < 0 ? 'neg' : ''}">${eur(a.net)}</span><small> / ${eur(g).replace(/,00/, '')}</small>`, `${pbar(a.net / g, a.net >= g ? 'won' : '')}<span>${a.net >= g ? 'cumplido' : `faltan ${eur(rest)} -> ${eur(rest / left)}/día (${left} días)`}</span>`, 'hero')}
-    ${tile('Ventas', String(a.n) + (T ? `<small> / ${T}</small>` : ''), T ? (a.n >= T ? '<span class="pos">cumplido</span>' : `necesitas ${rate1(needS)}/día · vas a ${rate1(pz.paceDay)}/día`) : `vas a ${rate1(pz.paceDay)}/día`)}
-    ${tile('A este ritmo', projNet === null ? '—' : `<span class="${projNet >= g ? 'pos' : 'neg'}">${eur(projNet).replace(/,\d\d(?=\s)/, '')}</span>`, projNet === null ? 'se calcula a partir del día 3' : projNet >= g ? 'llegas al objetivo del mes' : `te quedarías a ${eur(g - projNet).replace(/,\d\d(?=\s)/, '')}`)}
-  </div>`;
+  const cm = curMonth(), a = monthStats(cm), g = goalFor(cm), left = daysIn(cm) - new Date().getDate() + 1, rest = g - a.net, p = g ? Math.max(0, Math.min(1, a.net / g)) : 0;
+  const hero = `<section class="panel goalhero"><div class="gh-top"><span class="eyebrow">Objetivo de ${MONTHS[pm(cm).m - 1]}</span><button class="lnk" data-a="planedit">Cambiar</button></div>
+    <div class="gh-big"><span class="${a.net < 0 ? 'neg' : ''}">${eur(a.net)}</span><small> / ${eur(g).replace(/,00(?=\s)/, '')}</small></div>${pbar(p)}
+    <div class="mut sm2">${a.net >= g ? 'Cumplido.' : `Faltan ${eur(rest)} → ${eur(rest / left)} al día · ${left} días`} · ${a.n} ventas</div></section>`;
   const gs = sortedGoals();
-  const mine = panel('Mis objetivos', gs.length ? goalsTable(gs) : empty('Aún no hay objetivos. Crea uno y se mide solo con tus datos.'), '<button class="lnk" data-a="goal">+ Objetivo</button>');
-  return `<div class="toolbar"><span class="ttl">Objetivos</span><div class="tb-r"><button class="btn-g" data-a="goal">+ Objetivo</button><button class="btn-o" data-a="planedit">Objetivo del mes</button><button class="ghost" data-a="stock-more">${st.stockMore ? 'Ver menos' : 'Ver más'}</button></div></div>
-    ${k}<div class="cols"><div class="col">${hustleCard()}${ladderCard(true)}${mine}</div><div class="col">${milestonesCard()}${st.stockMore ? paceBlock() + panel('Plan mensual', planTable(), '<button class="lnk" data-a="planedit">Editar</button>') : ''}</div></div>`;
+  const mine = panel('Mis objetivos', gs.length ? goalsTable(gs) : empty('Aún no hay objetivos.'), '<button class="lnk" data-a="goal">+ Objetivo</button>');
+  return `<div class="toolbar"><span class="ttl">Objetivos</span></div>
+    <div class="goalsv">${hero}${hustleCard()}<div class="full">${ladderCard(true)}</div><div class="full">${mine}</div></div>`;
 }
 
 /* ================= a sale is a moment: money pop + sparks ================= */
@@ -1672,26 +1668,26 @@ function periodSummary() {
     <tr class="tot"><th>Ritmo al mes</th><td class="n">${eur(w.run)}</td><td class="n">${eur(m.run)}</td></tr></tbody></table><div class="foot">Ritmo al mes: el beneficio de ese periodo llevado a un mes entero.</div>`);
 }
 
-/* ================= shipping labels ================= */
-const LBQ = []; // PDFs waiting for their watch (kept while the app is open)
+/* ================= shipping labels: their own tab ================= */
+const LBQ = []; // PDFs waiting (kept while the app is open)
 const newId = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
 const pTxt = (p) => String(p).replace('.', ',');
-async function openLabels(files) {
-  if (!st.sheet || st.sheet.kind !== 'labels') openSheet('labels', { today: [] });
-  if (files) await addLabelFiles(files);
-  await refreshLabels();
-  Lb.prune(todayKey()).catch(() => {});
-}
-async function refreshLabels() {
-  if (!st.sheet || st.sheet.kind !== 'labels') return;
-  try { st.sheet.ctx.today = await Lb.ofDay(todayKey()); } catch (e) { st.sheet.ctx.err = 'No se pudieron leer las etiquetas: ' + (e.message || e); }
-  redrawSheet();
+// view state: today's labels, choices for the label being prepared, and its preview
+const lbS = { today: [], loaded: false, err: '', model: null, acc: null, tag: null, crop: null, pv: null, pvFor: null, snap: null };
+const byId = (id) => document.getElementById(id);
+const lv = (id) => { const e = byId(id); return e ? e.value.trim() : ''; };
+const lbErr = (t) => { lbS.err = t; const e = byId('lb-err'); if (e) e.textContent = t; };
+const lbTags = () => (Array.isArray(S0().labelTags) ? S0().labelTags : ['black-gold', 'green-gold']);
+const tagOf = (l) => l.tag || l.modelName;
+async function loadToday() {
+  try { lbS.today = await Lb.ofDay(todayKey()); } catch (e) { lbS.err = 'No se pudieron leer las etiquetas: ' + (e.message || e); }
+  lbS.loaded = true; renderSoon();
 }
 async function addLabelFiles(files) {
   const pdfs = [...files].filter((f) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
   if (!pdfs.length) { toast('Solo etiquetas en PDF'); return; }
   for (const f of pdfs) LBQ.push({ name: f.name, bytes: new Uint8Array(await f.arrayBuffer()) });
-  if (st.sheet && st.sheet.kind === 'labels') redrawSheet();
+  if (st.tab !== 'etiquetas') setTab('etiquetas'); else renderSoon();
 }
 // quick prices: what this watch sold for most often lately, plus its listing price
 function priceChips(m) {
@@ -1704,68 +1700,126 @@ function priceChips(m) {
 }
 function lbPriceRow(m) {
   const ps = priceChips(m);
-  return ps.length ? ps.map((p, i) => `<button type="button" class="chip" data-a="lb-price" data-v="${p}" aria-pressed="${i === 0}">${eur(p)}</button>`).join('') : '<span class="mut sm2">Sin ventas de este reloj aún: escribe el precio.</span>';
+  return ps.length ? ps.map((p, i) => `<button type="button" class="chip" data-a="lb-price" data-v="${p}" aria-pressed="${i === 0}">${eur(p)}</button>`).join('') : '';
 }
 function packList(list) {
-  const by = {}; list.forEach((l) => { by[l.modelName] = (by[l.modelName] || 0) + 1; });
+  const by = {}; list.forEach((l) => { const k = tagOf(l); by[k] = (by[k] || 0) + 1; });
   return Object.entries(by).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
 }
-function labelsSheet(ctx) {
-  const today = ctx.today || [], cur = LBQ[0];
-  const ms = pickModels(), accs = acctNames().concat(['Wallapop']);
-  const accSel = accs.includes(ctx.acc) ? ctx.acc : accs.includes(lsGet('lg_lbacc', '')) ? lsGet('lg_lbacc', '') : brain().acc.mainName || accs[0];
-  const drop = `<label class="dropz" id="lb-drop"><input type="file" id="lb-file" accept="application/pdf,.pdf" multiple hidden><b>${LBQ.length ? 'Añadir más etiquetas' : 'Suelta aquí las etiquetas de Vinted'}</b><span>o toca para elegir los PDF descargados</span></label>`;
+function viewLabels() {
+  if (!lbS.loaded) loadToday();
+  const today = lbS.today, cur = LBQ[0], ms = pickModels(), accs = acctNames().concat(['Wallapop']);
+  const acc = accs.includes(lbS.acc) ? lbS.acc : accs.includes(lsGet('lg_lbacc', '')) ? lsGet('lg_lbacc', '') : brain().acc.mainName || accs[0];
+  const drop = `<label class="dropz${cur ? '' : ' big'}" id="lb-drop"><input type="file" id="lb-file" accept="application/pdf,.pdf" multiple hidden><b>${cur ? '+ Añadir más PDF' : 'Arrastra aquí las etiquetas de Vinted'}</b><span>${cur ? `${LBQ.length} en cola` : 'o toca para elegir los PDF que has descargado'}</span></label>`;
   let form = '';
-  if (cur) {
-    if (!ms.length) form = empty('Primero crea un reloj en Stock → + Reloj.');
-    else {
-      const pre = ctx.model && model(ctx.model) ? ctx.model : (ms.find((m) => n0(m.home) > 0) || ms[0]).id;
-      const ps = priceChips(model(pre));
-      form = `<div class="lb-cur"><div class="eyebrow">Etiqueta 1 de ${LBQ.length} · ${esc(cur.name)}</div>
-        <div class="field"><span class="lb">Reloj vendido</span>${watchPicker('lb-model', pre, ms)}</div>
-        <div class="field"><span class="lb">Cuenta</span><input type="hidden" id="lb-acc" value="${esc(accSel)}"><div class="chips">${accs.map((a) => `<button type="button" class="chip" data-a="lb-acc" data-v="${esc(a)}" aria-pressed="${a === accSel}">${esc(a)}</button>`).join('')}</div></div>
-        <div class="field"><label for="lb-price">Precio final (€)</label><div class="chips" id="lb-pchips">${lbPriceRow(model(pre))}</div><input id="lb-price" inputmode="decimal" value="${ps.length ? pTxt(ps[0]) : ''}" placeholder="19,50"></div>
-        <label class="check"><input type="checkbox" id="lb-pouch"${lsGet('lg_pouch', '1') === '1' ? ' checked' : ''}> Va con bolsita${pouchCost() ? ` (${eur(pouchCost())})` : ''}</label>
-        <label class="check"><input type="checkbox" id="lb-boost"${lsGet('lg_boost', '1') === '1' ? ' checked' : ''}> Lo promocioné (boost ${eur(boostCost())})</label>
-        <div class="err" id="sh-err">${esc(ctx.err || '')}</div>
-        <button class="primary" data-a="lb-save">Guardar venta y sellar</button>
-        <div class="btnrow"><button class="btn-o" data-a="lb-only">Solo sellar (la venta ya está apuntada)</button><button class="ghost" data-a="lb-skip">Quitar este PDF</button></div></div>`;
-    }
+  if (cur && !ms.length) form = empty('Primero crea un reloj en Stock → + Reloj.');
+  else if (cur) {
+    const mid = lbS.model && model(lbS.model) ? lbS.model : (ms.find((m) => n0(m.home) > 0) || ms[0]).id;
+    const tags = lbTags(), tag = lbS.tag !== null ? lbS.tag : lsGet('lg_lbtag_' + mid, tags[0] || '');
+    const ps = priceChips(model(mid));
+    form = `<section class="panel lbform"><div class="ph"><span>Etiqueta ${today.length + 1} · 1 de ${LBQ.length} en cola</span><span class="ph-r mut sm2">${esc(cur.name)}</span></div>
+      <div class="lbgrid">
+        <div class="lbcut"><div class="lb">1 · Marca la parte que se imprime</div>
+          <div class="cutwrap" id="lb-cut"><canvas id="lb-cv"></canvas><div class="cutbox" id="lb-box" hidden></div></div>
+          <div class="chips">${[['full', 'Entera'], ['top', 'Mitad de arriba'], ['tl', 'Arriba izquierda'], ['tr', 'Arriba derecha']].map(([v, l]) => `<button type="button" class="chip" data-a="lb-preset" data-v="${v}">${l}</button>`).join('')}</div>
+          <div class="hint">Arrastra sobre la etiqueta. El recorte se recuerda para las siguientes del mismo tipo.</div></div>
+        <div class="lbfields">
+          <div class="field"><span class="lb">2 · Color (se escribe en la etiqueta)</span><input type="hidden" id="lb-tag" value="${esc(tag)}">
+            <div class="chips" id="lb-tags">${tags.map((t) => `<span class="tagchip"><button type="button" class="chip" data-a="lb-tag" data-v="${esc(t)}" aria-pressed="${t === tag}">${esc(t)}</button><button type="button" class="tagx" data-a="lb-tagdel" data-v="${esc(t)}" aria-label="Quitar ${esc(t)}">×</button></span>`).join('')}</div>
+            <div class="addtag"><input id="lb-newtag" placeholder="otro color, ej. blue-silver" maxlength="24"><button type="button" class="btn-o" data-a="lb-tagadd">Añadir</button></div></div>
+          <div class="field"><span class="lb">3 · Reloj vendido</span>${watchPicker('lb-model', mid, ms)}</div>
+          <div class="field"><span class="lb">4 · Cuenta</span><input type="hidden" id="lb-acc" value="${esc(acc)}"><div class="chips">${accs.map((a) => `<button type="button" class="chip" data-a="lb-acc" data-v="${esc(a)}" aria-pressed="${a === acc}">${esc(a)}</button>`).join('')}</div></div>
+          <div class="field"><label for="lb-price">5 · Precio final (€)</label><div class="chips" id="lb-pchips">${lbPriceRow(model(mid))}</div><input id="lb-price" inputmode="decimal" value="${ps.length ? pTxt(ps[0]) : ''}" placeholder="19,50"></div>
+          <div class="checks"><label class="check"><input type="checkbox" id="lb-pouch"${lsGet('lg_pouch', '1') === '1' ? ' checked' : ''}> Con bolsita</label><label class="check"><input type="checkbox" id="lb-boost"${lsGet('lg_boost', '1') === '1' ? ' checked' : ''}> Con boost</label></div>
+          <div class="err" id="lb-err">${esc(lbS.err)}</div>
+          <button class="primary" data-a="lb-save">Guardar venta y preparar etiqueta</button>
+          <div class="btnrow"><button class="btn-o" data-a="lb-only">Solo preparar (venta ya apuntada)</button><button class="ghost" data-a="lb-skip">Quitar este PDF</button></div>
+        </div></div></section>`;
   }
   const pk = packList(today);
-  const batch = today.length ? `<div class="lb-pack"><div class="eyebrow">Para empaquetar hoy · ${today.length}</div>${pk.map(([n, c]) => `<div class="kv"><span>${esc(n)}</span><b>${c}×</b></div>`).join('')}</div>
-    <button class="primary" data-a="lb-merge">Unir e imprimir el lote de hoy (${today.length})</button>
-    <table class="xl list"><tbody>${today.map((l) => `<tr><td>#${l.n} ${esc(l.modelName)}<span class="sub">${esc(l.account)}${l.price ? ' · ' + eur(n0(l.price)) : ''}${l.saleId ? '' : ' · solo sellada'}</span></td><td class="x" style="width:auto;padding:0 6px"><button class="cellbtn" data-a="lb-one" data-id="${esc(l.id)}">PDF</button></td><td class="x"><button class="del" data-a="lb-del" data-id="${esc(l.id)}" aria-label="Quitar etiqueta">×</button></td></tr>`).join('')}</tbody></table>
-    <div class="hint">Quitar una etiqueta no borra la venta. Las etiquetas se guardan solo en este dispositivo durante 14 días.</div>`
-    : (cur ? '' : `<div class="hint">Cada PDF sale con el reloj y la cuenta escritos arriba, y la venta queda apuntada (resta 1 del stock en casa). Al final, "Unir e imprimir" junta las de hoy ordenadas por reloj.</div>`);
-  return head('ETIQUETAS · ' + shortDate(todayKey()).toUpperCase()) + `<div class="stack">${!cur && ctx.err ? `<div class="err">${esc(ctx.err)}</div>` : ''}${drop}${form}${batch}</div>`;
+  const batch = today.length ? panel(`Hoy · ${today.length} etiqueta${today.length === 1 ? '' : 's'}`, `<div class="lb-pack">${pk.map(([n, c]) => `<div class="kv"><span>${esc(n)}</span><b>${c}×</b></div>`).join('')}</div>
+      <div class="stack pad"><button class="primary" data-a="lb-merge">Descargar las ${today.length} en un PDF para imprimir</button></div>
+      <table class="xl list"><tbody>${today.map((l) => `<tr><td>#${l.n} ${esc(tagOf(l))}<span class="sub">${esc(l.modelName)} · ${esc(l.account)}${l.price ? ' · ' + eur(n0(l.price)) : ''}</span></td><td class="x" style="width:auto;padding:0 6px"><button class="cellbtn" data-a="lb-one" data-id="${esc(l.id)}">PDF</button></td><td class="x"><button class="del" data-a="lb-del" data-id="${esc(l.id)}" aria-label="Quitar etiqueta">×</button></td></tr>`).join('')}</tbody></table>
+      <div class="foot">Ordenadas por color. Quitar una etiqueta no borra la venta. Se guardan en este dispositivo 14 días.</div>`)
+    : (cur ? '' : `<div class="hint lbhelp">Cada PDF sale recortado a la etiqueta con el color escrito en pequeño arriba, y la venta queda apuntada (resta 1 del stock). Al final, un botón te da todas las de hoy en un solo PDF.</div>`);
+  return `<div class="toolbar"><div class="ttl">Etiquetas</div><span class="mut sm2">${shortDate(todayKey())}</span></div><div class="lbview">${drop}${form}${batch}</div>`;
+}
+// after the tab is drawn: file input, drop zone, the preview and its crop box
+async function afterLabels() {
+  const lf = byId('lb-file'); if (lf) lf.addEventListener('change', () => addLabelFiles(lf.files));
+  const dz = byId('lb-drop');
+  if (dz) {
+    ['dragenter', 'dragover'].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add('over'); }));
+    dz.addEventListener('dragleave', () => dz.classList.remove('over'));
+    dz.addEventListener('drop', (e) => { e.preventDefault(); e.stopPropagation(); dz.classList.remove('over'); addLabelFiles(e.dataTransfer.files); });
+  }
+  const lm = byId('lb-model');
+  if (lm) lm.addEventListener('change', () => {
+    const m = model(lm.value), ps = priceChips(m); lbS.model = lm.value;
+    byId('lb-pchips').innerHTML = lbPriceRow(m); byId('lb-price').value = ps.length ? pTxt(ps[0]) : '';
+    const saved = lsGet('lg_lbtag_' + lm.value, null); if (saved !== null && lbTags().includes(saved)) setTag(saved);
+  });
+  const cur = LBQ[0], cv = byId('lb-cv'), wrap = byId('lb-cut');
+  if (!cur || !cv || !wrap) return;
+  const w = Math.max(220, Math.min(wrap.clientWidth || 360, 460));
+  try {
+    if (lbS.pvFor === cur && lbS.snap && lbS.pv) { // already drawn once: copy the picture instead of reading the PDF again
+      cv.width = lbS.snap.width; cv.height = lbS.snap.height; cv.style.width = lbS.pv.css.w + 'px'; cv.style.height = lbS.pv.css.h + 'px';
+      cv.getContext('2d').drawImage(lbS.snap, 0, 0);
+    } else {
+      const pv = await Lb.preview(cur.bytes, cv, w);
+      if (!document.body.contains(cv)) return;
+      const snap = document.createElement('canvas'); snap.width = cv.width; snap.height = cv.height; snap.getContext('2d').drawImage(cv, 0, 0);
+      Object.assign(lbS, { pv, pvFor: cur, snap });
+      if (!lbS.crop) lbS.crop = (S0().labelCrops || {})[pv.key] || { x: 0, y: 0, w: 1, h: 1 };
+    }
+  } catch (e) { lbErr('No se puede leer este PDF: ' + (e.message || e)); return; }
+  drawCut();
+  let start = null;
+  const at = (e) => { const r = cv.getBoundingClientRect(); return { x: Math.max(0, Math.min(r.width, e.clientX - r.left)), y: Math.max(0, Math.min(r.height, e.clientY - r.top)) }; };
+  wrap.addEventListener('pointerdown', (e) => { start = at(e); wrap.setPointerCapture(e.pointerId); e.preventDefault(); });
+  wrap.addEventListener('pointermove', (e) => { if (!start) return; const p = at(e); showBox({ l: Math.min(start.x, p.x), t: Math.min(start.y, p.y), w: Math.abs(p.x - start.x), h: Math.abs(p.y - start.y) }); });
+  const end = (e) => { if (!start) return; const p = at(e), r = { l: Math.min(start.x, p.x), t: Math.min(start.y, p.y), w: Math.abs(p.x - start.x), h: Math.abs(p.y - start.y) }; start = null; if (r.w > 16 && r.h > 16) lbS.crop = lbS.pv.toCrop(r); drawCut(); };
+  wrap.addEventListener('pointerup', end); wrap.addEventListener('pointercancel', () => { start = null; drawCut(); });
+}
+function showBox(r) { const b = byId('lb-box'); if (!b) return; Object.assign(b.style, { left: r.l + 'px', top: r.t + 'px', width: r.w + 'px', height: r.h + 'px' }); b.hidden = false; }
+function drawCut() { if (lbS.pv && lbS.crop) showBox(lbS.pv.toRect(lbS.crop)); }
+function setTag(t) {
+  lbS.tag = t; const inp = byId('lb-tag'); if (inp) inp.value = t;
+  document.querySelectorAll('[data-a="lb-tag"]').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.v === t)));
+}
+function cropPreset(v) {
+  if (!lbS.pv) return; const { w, h } = lbS.pv.css;
+  const r = { full: { l: 0, t: 0, w, h }, top: { l: 0, t: 0, w, h: h / 2 }, tl: { l: 0, t: 0, w: w / 2, h: h / 2 }, tr: { l: w / 2, t: 0, w: w / 2, h: h / 2 } }[v];
+  if (r) { lbS.crop = lbS.pv.toCrop(r); drawCut(); }
 }
 async function saveLabel(withSale) {
   const cur = LBQ[0]; if (!cur) return;
-  const m = model(sv('lb-model')), acc = sv('lb-acc'), price = num(sv('lb-price')), t = todayKey();
-  if (!m) return shErr('Elige el reloj.');
-  if (!acc) return shErr('Elige la cuenta.');
-  if (withSale && !(price > 0)) return shErr('Pon el precio final.');
+  const m = model(lv('lb-model')), acc = lv('lb-acc'), tag = lv('lb-tag'), price = num(lv('lb-price')), t = todayKey();
+  if (!m) return lbErr('Elige el reloj.');
+  if (!acc) return lbErr('Elige la cuenta.');
+  if (withSale && !(price > 0)) return lbErr('Pon el precio final.');
   const n = (await Lb.ofDay(t)).reduce((x, l) => Math.max(x, n0(l.n)), 0) + 1;
   let bytes;
-  try { bytes = await Lb.stamp(cur.bytes, Lb.headerText({ n, model: m.name, account: acc })); } catch (e) { return shErr('No se puede editar este PDF (' + (e.message || e) + '). Quítalo y descarga la etiqueta otra vez.'); }
+  try { bytes = await Lb.stamp(cur.bytes, Lb.headerText({ n, tag: tag || m.name }), lbS.crop); } catch (e) { return lbErr('No se puede editar este PDF (' + (e.message || e) + '). Quítalo y descarga la etiqueta otra vez.'); }
+  if (lbS.pv && lbS.crop) await patchSettings({ labelCrops: { ...(S0().labelCrops || {}), [lbS.pv.key]: lbS.crop } }); // remember this cut for the same kind of PDF
   let res = null;
   if (withSale) {
-    const pouch = $('#lb-pouch', sheetEl).checked, boost = $('#lb-boost', sheetEl).checked;
+    const pouch = byId('lb-pouch').checked, boost = byId('lb-boost').checked;
     lsSet('lg_pouch', pouch ? '1' : '0'); lsSet('lg_boost', boost ? '1' : '0');
     res = await recordSale({ m, price, cost: NaN, acc, date: t, pouch, boost, soldAt: nowISO() });
   }
-  await Lb.put({ id: newId(), day: t, n, at: nowISO(), saleId: res ? res.sale.id : null, modelId: m.id, modelName: m.name, account: acc, price: res ? r2(price) : null, name: cur.name, bytes });
-  lsSet('lg_lbacc', acc);
+  await Lb.put({ id: newId(), day: t, n, at: nowISO(), saleId: res ? res.sale.id : null, modelId: m.id, modelName: m.name, tag: tag || '', account: acc, price: res ? r2(price) : null, name: cur.name, bytes });
+  lsSet('lg_lbacc', acc); if (tag) lsSet('lg_lbtag_' + m.id, tag);
   LBQ.shift();
-  Object.assign(st.sheet.ctx, { model: m.id, acc, err: '' });
-  toast(`#${n} sellada${res && res.profit !== null ? ' · ' + eur(res.profit, true) : ''}`);
-  await refreshLabels();
+  Object.assign(lbS, { model: m.id, acc, tag: null, crop: null, pv: null, pvFor: null, snap: null, err: '' });
+  toast(`#${n} lista${tag ? ' · ' + tag : ''}${res && res.profit !== null ? ' · ' + eur(res.profit, true) : ''}`);
+  await loadToday();
 }
 async function mergeLabels() {
-  const list = (await Lb.ofDay(todayKey())).sort((a, b) => a.modelName.localeCompare(b.modelName) || a.n - b.n);
-  if (!list.length) return shErr('Hoy no hay etiquetas.');
-  try { Lb.download(await Lb.merge(list), `IMPRIMIR_HOY_${todayKey()}.pdf`); } catch (e) { return shErr('No se pudieron unir: ' + (e.message || e)); }
+  const list = (await Lb.ofDay(todayKey())).sort((a, b) => tagOf(a).localeCompare(tagOf(b)) || a.n - b.n);
+  if (!list.length) return lbErr('Hoy no hay etiquetas.');
+  try { Lb.download(await Lb.merge(list), `IMPRIMIR_HOY_${todayKey()}.pdf`); } catch (e) { return lbErr('No se pudieron unir: ' + (e.message || e)); }
   toast('Empaqueta: ' + packList(list).map(([n, c]) => `${c}× ${n}`).join(', '));
 }
 
@@ -1886,7 +1940,6 @@ function sheetHTML() {
       <div class="fields2">${fld('w-amt', 'Importe (€)', String(r2(Math.max(0, vintedBalance(acc)))).replace('.', ','))}${dateFld('w-date', ctx.date)}</div>
       <div class="hint">Saldo en Vinted de esa cuenta: ${eur(vintedBalance(acc))}. Sale del saldo de Vinted y entra en tu banco.</div><div class="err" id="sh-err"></div><button class="primary" data-a="save-withdraw">Guardar retiro</button>`;
   }
-  if (kind === 'labels') return labelsSheet(ctx);
   if (kind === 'split') {
     const w = db.get(C.transfers, ctx.id); if (!w) return head('REPARTO') + empty('Este retiro ya no existe.');
     const ps = splitOf(w);
@@ -2202,16 +2255,6 @@ function orderPreview() {
     ${ls.map((l) => { const m = model(l.modelId), p = al.per[l.modelId]; return p ? `<div class="kv"><span class="mut">Coste/ud ${esc(m ? m.name : l.name || 'nuevo')}${al.byW ? '' : ' (sin peso: envío por valor)'}</span><b>≈ ${eur(p.landed)}</b></div>` : ''; }).join('')}`;
 }
 function afterSheet() {
-  const lf = sheetEl.querySelector('#lb-file');
-  if (lf) {
-    lf.addEventListener('change', () => { addLabelFiles(lf.files); });
-    const dz = sheetEl.querySelector('#lb-drop');
-    ['dragenter', 'dragover'].forEach((ev) => dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add('over'); }));
-    dz.addEventListener('dragleave', () => dz.classList.remove('over'));
-    dz.addEventListener('drop', (e) => { e.preventDefault(); e.stopPropagation(); dz.classList.remove('over'); addLabelFiles(e.dataTransfer.files); });
-  }
-  const lm = sheetEl.querySelector('#lb-model');
-  if (lm) lm.addEventListener('change', () => { const m = model(lm.value), ps = priceChips(m); $('#lb-pchips', sheetEl).innerHTML = lbPriceRow(m); $('#lb-price', sheetEl).value = ps.length ? pTxt(ps[0]) : ''; st.sheet.ctx.model = lm.value; });
   for (const f of ['sty', 'ang']) { const e = sheetEl.querySelector('#ae-' + f); if (e) e.addEventListener('change', async () => { await db.patch(C.listings, st.sheet.ctx.id, { [f === 'sty' ? 'style' : 'angle']: e.value || null }); toast('Guardado'); }); }
   const sel = sheetEl.querySelector('#f-model');
   if (sel) {
@@ -2701,16 +2744,20 @@ document.addEventListener('click', async (e) => {
   }
   switch (a) {
     case 'tab': if (st.sheet) closeSheet(); setTab(v); break;
-    case 'labels': openLabels(); break;
+    case 'labels': setTab('etiquetas'); break;
     case 'lb-acc': case 'lb-price': {
-      const f = a === 'lb-acc' ? 'lb-acc' : 'lb-price', inp = sheetEl.querySelector('#' + f); if (!inp) break;
-      inp.value = a === 'lb-price' ? pTxt(v) : v; if (a === 'lb-acc') st.sheet.ctx.acc = v;
-      sheetEl.querySelectorAll(`[data-a="${a}"]`).forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+      const inp = byId(a); if (!inp) break;
+      inp.value = a === 'lb-price' ? pTxt(v) : v; if (a === 'lb-acc') lbS.acc = v;
+      document.querySelectorAll(`[data-a="${a}"]`).forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
       break;
     }
-    case 'lb-skip': LBQ.shift(); redrawSheet(); break;
-    case 'lb-del': await Lb.remove(b.dataset.id); toast('Etiqueta quitada · la venta sigue apuntada'); await refreshLabels(); break;
-    case 'lb-one': { const l = (st.sheet.ctx.today || []).find((x) => x.id === b.dataset.id); if (l) Lb.download(l.bytes, `etiqueta-${l.n}-${l.modelName}.pdf`.replace(/[^\w.-]+/g, '_')); break; }
+    case 'lb-tag': setTag(v); break;
+    case 'lb-tagadd': { const t = lv('lb-newtag').toLowerCase().replace(/\s+/g, '-').replace(/[^\w\u00C0-\u00FF-]/g, ''); if (!t) break; const ts = lbTags(); if (!ts.includes(t)) await patchSettings({ labelTags: [...ts, t] }); lbS.tag = t; renderSoon(); break; }
+    case 'lb-tagdel': { await patchSettings({ labelTags: lbTags().filter((x) => x !== v) }); if (lbS.tag === v) lbS.tag = null; break; }
+    case 'lb-preset': cropPreset(v); break;
+    case 'lb-skip': LBQ.shift(); Object.assign(lbS, { crop: null, pv: null, pvFor: null, snap: null, err: '' }); renderSoon(); break;
+    case 'lb-del': await Lb.remove(b.dataset.id); toast('Etiqueta quitada · la venta sigue apuntada'); await loadToday(); break;
+    case 'lb-one': { const l = lbS.today.find((x) => x.id === b.dataset.id); if (l) Lb.download(l.bytes, `etiqueta-${l.n}-${tagOf(l)}.pdf`.replace(/[^\w.-]+/g, '_')); break; }
     case 'dtarget': await patchSettings({ dailyTarget: Number(v) }); break;
     case 'ld-paid': { const p = { ...(S0().ladderPaid || {}) }; p[v] = !p[v]; await patchSettings({ ladderPaid: p }); break; }
     case 'ladder': openSheet('ladder'); break;
@@ -2750,7 +2797,7 @@ document.addEventListener('click', async (e) => {
     }
     case 'settings': openSheet('settings'); break;
     case 'import': openSheet('import', {}); break;
-    case 'pick': { const inp = sheetEl.querySelector('#' + b.dataset.f); if (!inp) break; inp.value = v; sheetEl.querySelectorAll(`[data-a="pick"][data-f="${b.dataset.f}"]`).forEach((x) => { const on2 = x.dataset.v === v; x.classList.toggle('on', on2); x.setAttribute('aria-pressed', String(on2)); }); inp.dispatchEvent(new Event('change')); if (b.dataset.f === 'an-m') { const m = model(v), pr = sheetEl.querySelector('#an-price'); if (m && pr && !isNaN(num(m.listPrice))) pr.value = String(m.listPrice).replace('.', ','); } break; }
+    case 'pick': { const root = b.closest('.sheet') ? sheetEl : document; const inp = root.querySelector('#' + b.dataset.f); if (!inp) break; inp.value = v; root.querySelectorAll(`[data-a="pick"][data-f="${b.dataset.f}"]`).forEach((x) => { const on2 = x.dataset.v === v; x.classList.toggle('on', on2); x.setAttribute('aria-pressed', String(on2)); }); inp.dispatchEvent(new Event('change')); if (b.dataset.f === 'an-m') { const m = model(v), pr = sheetEl.querySelector('#an-price'); if (m && pr && !isNaN(num(m.listPrice))) pr.value = String(m.listPrice).replace('.', ','); } break; }
     case 'anuncio': openSheet('anuncio', { id: b.dataset.id }); break;
     case 'anuncio-new': openSheet('anuncio-new', { id: b.dataset.id, acc: v }); break;
     case 'an-save': {
@@ -2894,7 +2941,7 @@ document.addEventListener('drop', (e) => {
   if (!hasFiles(e)) return;
   e.preventDefault();
   const fs = [...e.dataTransfer.files].filter((f) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
-  if (fs.length) openLabels(fs);
+  if (fs.length) addLabelFiles(fs);
 });
 window.addEventListener('hashchange', () => { const h = location.hash.slice(1); if (TABS.some((t) => t[0] === h) && h !== st.tab) setTab(h); });
 
