@@ -48,7 +48,7 @@ const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
 
 const STATUS = { ganador: 'Ganador', test: 'Test', espera: 'En espera', descartado: 'Descartado' };
 const SORDER = { ganador: 0, test: 1, espera: 2, descartado: 3 };
-const APP_V = 'v36';
+const APP_V = 'v37';
 const CATS = { personal: ['Comida', 'Ocio', 'Ropa', 'Transporte', 'Móvil y subs', 'Ahorro / retiro personal', 'Otros'], negocio: ['Boost Vinted', 'Envíos', 'Fotos y material', 'Otros negocio'] };
 // what a goal can measure; everything except "manual" and "task" is read from your data automatically
 const METRICS = {
@@ -272,7 +272,7 @@ const st = {
 /* ---------------- shell ---------------- */
 function shell() {
   app.innerHTML = `<header class="ribbon"><div class="wrap rib-in">
-      <div class="brand"><img class="brand-mark" src="icons/icon.svg" alt=""><b>OO<i>Q</i></b></div>
+      <div class="brand"><img class="brand-mark" src="icons/icon.svg" alt=""><b>OOQ</b></div>
       <nav class="toptabs" aria-label="Secciones">${TOPBAR.map((k) => `<button data-a="tab" data-v="${k}">${(TABS.find((t) => t[0] === k) || [k, k])[1]}</button>`).join('')}</nav>
       <div class="top-r"><button class="syncpill" data-a="settings" id="syncpill"><i></i><span>Local</span></button><button class="iconbtn addtop" data-a="add" aria-label="Añadir"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
       <button class="iconbtn" data-a="settings" aria-label="Ajustes"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button></div>
@@ -855,16 +855,11 @@ function costWarnings() {
 }
 function riskAlerts() {
   const items = [];
-  const low = lowStockAlerts(); if (low) items.push(low);
   for (const r of reservedSales()) {
     const nm = esc(r.m ? r.m.name : r.v.modelName);
     if (r.filled) items.push(`<div class="alert"><b>Envía ya: ${nm}</b><span>vendido el ${shortDate(r.v.date)} a ${esc(r.v.account || '')} · ya está en casa · plazo ${shortDate(r.by)}</span><span class="btnrow"><button class="btn-o" data-a="sale-shipped" data-id="${esc(r.v.id)}">Enviado</button></span></div>`);
     else items.push(`<div class="alert ${r.late ? 'bad' : ''}"><b>${r.late ? 'No llega a tiempo' : 'Reservado'}: ${nm}</b><span>vendido el ${shortDate(r.v.date)} sin stock · ${r.eta ? 'llega ~' + shortDate(r.eta) : 'no hay nada pedido'} · plazo de envío ${shortDate(r.by)}${r.late ? ' → pide prórroga al comprador' : ''}</span><span class="btnrow"><button class="btn-o" data-a="sale-shipped-done" data-id="${esc(r.v.id)}">Ya lo envié</button><button class="btn-o" data-a="sale-extend" data-id="${esc(r.v.id)}">Prórroga +7 días</button></span></div>`);
   }
-  const ns = listingsNoStock();
-  const sin = ns.filter((x) => x.kind === 'sin'), cam = ns.filter((x) => x.kind === 'camino');
-  if (sin.length) items.push(`<button class="alert bad" data-a="listing" data-id="${esc(sin[0].l.id)}"><b>${sin.length} anuncio${sin.length === 1 ? '' : 's'} sin stock</b><span>${esc(sin.map((x) => `${x.m.name} (${x.l.account})`).join(', '))} → no hay nada pedido: si se vende no puedes enviarlo</span></button>`);
-  if (cam.length) items.push(`<button class="alert" data-a="listing" data-id="${esc(cam[0].l.id)}"><b>${cam.length} anuncio${cam.length === 1 ? '' : 's'} con el stock en camino</b><span>${esc(cam.map((x) => `${x.m.name}: llega ~${shortDate(x.arr.eta)}${x.ok ? '' : ' (más de 7 días: si se vende hoy, no llegas al plazo)'}`).join(' · '))}</span></button>`);
   const cw = costWarnings();
   if (cw.length) items.push(`<button class="alert" data-a="model" data-id="${esc(cw[0].m.id)}"><b>Coste puesto a mano que no cuadra</b><span>${esc(cw.map((x) => `${x.m.name}: ${eur(x.typed)} y ${x.why}`).join(' · '))}</span></button>`);
   return items.join('');
@@ -900,12 +895,10 @@ function viewToday() {
   // what needs you today: bad data, bills due, stock running out
   const fix = salesToFix().length, nm = B.addD(t, 31).slice(0, 7);
   const bills = L('bills').filter((b) => !b.paid && b.month <= nm).sort((x, y) => x.month.localeCompare(y.month));
-  const pl = plan(), warn = warnLines(pl);
   const sq = sadaqahState(), fri = new Date().getDay() === 5;
   const sqAlert = fri && sq.owed > 0 ? `<button class="alert" data-a="sadaqah-pay"><b>Viernes · sadaqah por dar: ${eur(sq.owed)}</b><span>toca cuando la hayas dado y se suma a tu total</span></button>` : '';
   const todo = `${sqAlert}${riskAlerts()}${fix ? `<button class="alert" data-a="orphans"><b>${fix} venta${fix === 1 ? '' : 's'} sin reloj o sin coste</b><span>toca para arreglarlas</span></button>` : ''}
-    ${bills.length ? `<div class="hy-bills"><div class="hy-sub">Pagos que vienen · ${eur(sum(bills.map((b) => n0(b.amount))))}</div>${bills.map((b) => `<div class="kv"><span>${esc(b.concept)} <span class="mut">· ${b.month === mk ? 'este mes' : monthName(b.month).split(' ')[0].toLowerCase()}</span></span><b>${eur(n0(b.amount))}</b></div>`).join('')}</div>` : ''}
-    <div class="todos">${warn}</div>`;
+    ${bills.length ? `<div class="hy-bills"><div class="hy-sub">Pagos que vienen · ${eur(sum(bills.map((b) => n0(b.amount))))}</div>${bills.map((b) => `<div class="kv"><span>${esc(b.concept)} <span class="mut">· ${b.month === mk ? 'este mes' : monthName(b.month).split(' ')[0].toLowerCase()}</span></span><b>${eur(n0(b.amount))}</b></div>`).join('')}</div>` : ''}`;
   const lead = brain().lead, open = L('orders').filter((o) => !o.draft && o.status !== 'recibido').sort((x, y) => (x.date || '').localeCompare(y.date || ''));
   const way = open.length ? open.map((o) => { const u = sum((o.lines || []).map((l) => n0(l.qty))), eta = B.etaOf(o, lead); return `<button class="hy-row" data-a="order" data-id="${esc(o.id)}"><span class="hy-ic way"></span><span class="hy-t"><b>${u} uds · ${esc((o.lines || []).map((l) => { const m = model(l.modelId); return m ? m.name : l.name || 'Reloj'; }).filter((v, i, s) => s.indexOf(v) === i).slice(0, 3).join(', '))}</b><span class="mut">llega ~${dShort(eta)} · ${inDays(eta)}</span></span><b class="hy-a">${eur(orderCost(o))}</b></button>`; }).join('') : empty('Nada en camino.');
   // every euro in and out, newest first
@@ -917,9 +910,9 @@ function viewToday() {
   ].sort((x, y) => String(y.at).localeCompare(String(x.at))).slice(0, 8);
   const log = ev.length ? ev.map((e) => `<div class="hy-row"><span class="hy-ic ${e.k}"></span><span class="hy-t"><b>${esc(e.t)}</b><span class="mut">${shortDate(String(e.at).slice(0, 10))} · ${esc(e.s)}</span></span><b class="hy-a ${e.v < 0 ? 'neg' : 'pos'}">${eur(e.v, true)}</b></div>`).join('') : empty('Aún no hay movimientos.');
   return `<div class="hy">${hero}${money}
-    <div class="hy-actions"><button class="btn-g" data-a="labels">Etiquetas</button><button class="btn-o" data-a="add" data-mode="venta">+ Venta</button><button class="btn-o" data-a="add" data-mode="pedido">+ Pedido</button><button class="btn-o" data-a="add" data-mode="gasto">+ Gasto</button><button class="btn-o" data-a="withdraw">Retiro a Bunq</button><button class="btn-o" data-a="boostwaste">+ Boost sin venta</button></div>
-    <div class="g2"><div class="col">${hustleCard()}${panel('Hoy toca', todo)}${panel('En camino', `<div class="hy-list">${way}</div>`)}</div>
-    <div class="col">${ladderCard(false)}${todayGoals()}${panel('Últimos movimientos', `<div class="hy-list">${log}</div>`, '<button class="lnk" data-a="tab" data-v="gastos">Ver todo</button>')}
+    <div class="hy-actions"><button class="btn-g" data-a="labels">Etiquetas</button><button class="btn-o" data-a="add" data-mode="venta">+ Venta</button><button class="btn-o" data-a="add" data-mode="pedido">+ Pedido</button><button class="btn-o" data-a="add" data-mode="gasto">+ Gasto</button></div>
+    <div class="g2"><div class="col">${hustleCard()}${todo.trim() ? panel('Hoy toca', todo) : ''}${panel('En camino', `<div class="hy-list">${way}</div>`)}</div>
+    <div class="col">${ladderRow()}${panel('Últimos movimientos', `<div class="hy-list">${log}</div>`, '<button class="lnk" data-a="tab" data-v="gastos">Ver todo</button>')}
     <button class="hy-claude" data-a="export-ai"><b>Copiar para Claude</b><span>Pega el export en tu proyecto y te digo el mejor movimiento</span></button></div></div></div>`;
 }
 function viewPnlSimple() {
@@ -928,7 +921,7 @@ function viewPnlSimple() {
   return `<div class="toolbar">${mnav()}<div class="tb-r"><button class="btn-g" data-a="add" data-mode="venta" data-date="${st.selDay}">+ Venta</button><button class="btn-o" data-a="labels">Etiquetas</button><button class="ghost" data-a="stock-more">Ver más</button></div></div>
     ${fix ? `<div class="alerts"><button class="alert" data-a="orphans"><b>${fix} venta${fix === 1 ? '' : 's'} sin reloj o sin coste</b><span>toca para arreglarlas</span></button></div>` : ''}
     <div class="kpis k3">${tile('Beneficio', `<span class="${a.net < 0 ? 'neg' : ''}">${eur(a.net)}</span>`, `${pbar(a.net / g, a.net >= g ? 'won' : '')}<span>${Math.max(0, Math.round(a.net / g * 100))}% de ${eur(g)}</span>`, 'hero')}${tile('Ventas', String(a.n), `vendido ${eur(a.rev)}`)}${tile('Ticket medio', eur(a.ticket), 'por venta')}</div>
-    <div class="g2 pnl"><div class="col"><div class="o1">${panel('Beneficio por día', calGrid2(mk))}</div></div><div class="col"><div class="o2">${dayPanel2()}</div><div class="o3">${periodSummary()}</div><div class="o4">${panel('Stock', `<div class="todos">${warnLines(plan())}</div><div class="foot"><button class="lnk" data-a="tab" data-v="stock">Ver stock</button></div>`)}</div></div></div>`;
+    <div class="g2 pnl"><div class="col"><div class="o1">${panel('Beneficio por día', calGrid2(mk))}</div></div><div class="col"><div class="o2">${dayPanel2()}</div><div class="o3">${periodSummary()}</div></div></div>`;
 }
 function viewPnl() {
   if (!st.stockMore) { st.calMode = 'profit'; return viewPnlSimple(); }
@@ -996,7 +989,7 @@ function modelCards() {
   return panel('Relojes', `<div class="filters">${chips}</div><div class="mcards">${shown.map((m) => {
     const r = stockOf(m.id), e = r ? r.m.status : m.status, n = L('sales').filter((v) => v.modelId === m.id && !v.cancelled).length, src = costSrc(m);
     return `<button class="mcard${e === 'descartado' ? ' off' : ''}" data-a="model" data-id="${esc(m.id)}">${thumb(m, 54)}<div class="mc-b"><b>${esc(m.name)}</b><span class="st-${STATUS[e] ? e : 'test'}">${STATUS[e] || 'Test'}</span>
-      <div class="mc-g"><span><b>${n0(m.home)}</b> casa</span><span><b>${n0(m.transit)}</b> camino</span><span><b>${n}</b> vendidos</span></div>${lowBadge(m)}
+      <div class="mc-g"><span><b>${n0(m.home)}</b> casa</span><span><b>${n0(m.transit)}</b> camino</span><span><b>${n}</b> vendidos</span></div>
       <div class="mc-c">${src === 'por defecto' ? '<span class="neg">coste FALTA</span>' : `coste ${eur(costOf(m))} <span class="mut">${src.startsWith('real') ? 'real' : src.startsWith('estimado') ? 'estimado' : 'a mano'}</span>`}${r && r.nCost ? ` · <span class="pos">${eur(r.unitProfit)}/venta</span>` : ''}</div></div></button>`;
   }).join('') || empty('No hay relojes en este filtro.')}</div>`, '<button class="lnk" data-a="model">+ Reloj</button>');
 }
@@ -1023,14 +1016,14 @@ function viewStockSimple() {
   const list = rows.map(({ m, r }) => {
     const wk = r.rate * 7, left = r.rate > 0 && r.home > 0 ? B.addD(t, Math.floor(r.home / r.rate)) : null, arr = r.arrivals[0];
     const keep = priceOf(m) - costOf(m) - pc;
-    return `<button class="srow" data-a="model" data-id="${esc(m.id)}">${thumb(m, 46)}<div class="sr-n"><b>${esc(m.name)}</b><span class="mut">${r.m.status === 'ganador' ? 'ganador' : 'en test'}${isEst(m) || costSrc(m) === 'por defecto' ? '' : ` · deja ~${eur(keep)}/venta`}</span>${lowBadge(m)}</div>
+    return `<button class="srow" data-a="model" data-id="${esc(m.id)}">${thumb(m, 46)}<div class="sr-n"><b>${esc(m.name)}</b><span class="mut">${r.m.status === 'ganador' ? 'ganador' : 'en test'}${isEst(m) || costSrc(m) === 'por defecto' ? '' : ` · deja ~${eur(keep)}/venta`}</span></div>
       <div class="sr-k"><b>${wk ? wk.toFixed(1).replace('.', ',') : '–'}</b><span>a la semana</span></div>
       <div class="sr-k"><b>${r.home}</b><span>en casa</span></div>
       <div class="sr-k"><b>${r.transit || '–'}</b><span>${arr ? 'llegan ' + dShort(arr.eta) : 'en camino'}</span></div>
       <div class="sr-k"><b>${left ? dShort(left) : '–'}</b><span>${left ? 'te dura hasta' : r.home ? 'sin ritmo' : 'agotado'}</span></div></button>`;
   }).join('');
   return `<div class="toolbar"><div class="ttl">Stock</div><div class="tb-r"><button class="btn-g" data-a="add" data-mode="pedido">+ Pedido</button><button class="btn-o" data-a="tab" data-v="tests">Tests</button><button class="btn-o" data-a="catchup">Contar stock</button><button class="ghost" data-a="stock-more">Ver más</button></div></div>
-    <div class="g2s"><div class="s-todo">${panel('Avisos de stock', `<div class="todos">${warnLines(pl)}</div><div class="foot">Avisa cuando te quedan menos de ${pl.lead + 7} días (un pedido tarda ${pl.lead}). Cuenta lo que viene en camino.</div>`)}</div><div class="s-ord">${ordersPanel()}</div><div class="s-list">
+    <div class="g2s"><div class="s-ord">${ordersPanel()}</div><div class="s-list">
     ${panel('Más rápidos primero', `<div class="slist">${list || empty('Nada en stock.')}</div><div class="foot">"A la semana" cuenta solo los días que lo tenías en casa.</div>`, '<button class="lnk" data-a="model">+ Reloj</button>')}</div></div>`;
 }
 function viewStock2() {
@@ -1038,7 +1031,7 @@ function viewStock2() {
   const pl = plan();
   const sumHome = sum(L('models').map((m) => n0(m.home))), sumTr = sum(L('models').map((m) => n0(m.transit))), val = sum(L('models').filter((m) => m.status !== 'descartado').map((m) => n0(m.home) * costOf(m)));
   return `<div class="toolbar"><div class="ttl">Stock y caja</div><div class="tb-r"><button class="ghost" data-a="stock-more">Ver menos</button><span class="mut sm2">${sumHome} en casa · ${sumTr} en camino · ${eur(val)} en stock · bolsitas ${pouches()}</span><button class="btn-o" data-a="catchup">Contar stock</button><button class="btn-g" data-a="add" data-mode="pedido">+ Pedido</button></div></div>
-    ${panel('Avisos de stock', `<div class="todos">${warnLines(pl)}</div>`)}${famCards(pl)}
+    ${famCards(pl)}
     <div class="g2"><div class="col">${panel('Stock y dinero · próximos 60 días', timelineChart(pl), `pedido tarda ${pl.lead} d`)}${modelCards()}</div><div class="col">${cashPanel(pl)}${ordersPanel()}</div></div>`;
 }
 
@@ -1453,7 +1446,7 @@ function viewSpend() {
     return `<tr class="grp"><td colspan="2">${monthName(m)}</td><td class="n">${eur(sum(bs.filter((b) => !b.paid).map((b) => n0(b.amount))))}</td><td></td></tr>` + bs.map((b) =>
       `<tr class="${b.paid ? 'paid' : ''}"><td class="cb"><button class="chk" data-a="paid" data-id="${esc(b.id)}" aria-pressed="${!!b.paid}" aria-label="Marcar pagado">${b.paid ? '✓' : ''}</button></td><td>${esc(b.concept)}</td><td class="n">${eur(n0(b.amount))}</td><td class="x">${xbtn('bills', b.id)}</td></tr>`).join('');
   }).join('')}</tbody></table><div class="foot">Al marcar un pago se resta de la caja.</div>` : empty('Sin pagos fijos pendientes.');
-  return `<div class="toolbar">${mnav()}<span style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn-o" data-a="boostwaste">+ Boost sin venta</button><button class="btn-o" data-a="add" data-mode="ingreso">+ Ingreso</button><button class="btn-g" data-a="add" data-mode="gasto">+ Gasto</button></span></div>
+  return `<div class="toolbar">${mnav()}<span style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn-g" data-a="withdraw">Retiro a Bunq</button><button class="btn-o" data-a="boostwaste">+ Boost sin venta</button><button class="btn-o" data-a="add" data-mode="ingreso">+ Ingreso</button><button class="btn-g" data-a="add" data-mode="gasto">+ Gasto</button></span></div>
     <div class="cols"><div class="col">${panel('Gastos de ' + MONTHS[pm(mk).m - 1], totals)}${panel('Movimientos', moves)}</div><div class="col">${bunqPanel()}${panel('Pagos fijos', bills, '<button class="lnk" data-a="bill">+ Pago</button>')}</div></div>`;
 }
 
@@ -1539,19 +1532,11 @@ function viewGoals() {
 
 /* ================= a sale is a moment: money pop + sparks ================= */
 function celebrate(profit) {
-  try { if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return; } catch {}
-  const h = hustle(), top = h.today === h.T * 2, hit = h.today === h.T;
-  const el = document.createElement('div');
-  el.className = 'cash-pop' + (hit || top ? ' gold' : '');
-  el.innerHTML = `<b>${profit === null ? '+1 venta' : esc(eur(profit, true))}</b><span>${top ? 'Día top: doble objetivo' : hit ? 'Objetivo de hoy cumplido · +500 XP' : `+100 XP · ${h.today}/${h.T} hoy`}</span>`;
-  document.body.appendChild(el); setTimeout(() => el.remove(), 2000);
-  const n = hit || top ? 44 : 22, cols = hit || top ? ['#ffe08a', '#f5c542', '#5cf2a8', '#22e58a'] : ['#5cf2a8', '#22e58a', '#12b866', '#eafff2'];
-  for (let i = 0; i < n; i++) {
-    const s2 = document.createElement('i'), a = Math.random() * Math.PI * 2, d = 90 + Math.random() * 170;
-    s2.className = 'spark';
-    s2.style.cssText = `left:50%;top:38%;background:${cols[i % cols.length]};--dx:${Math.cos(a) * d}px;--dy:${Math.sin(a) * d + 60}px;--r:${Math.round(Math.random() * 540)}deg;animation-delay:${Math.random() * 0.12}s`;
-    document.body.appendChild(s2); setTimeout(() => s2.remove(), 1500);
-  }
+  const h = hustle(), el = document.createElement('div');
+  el.className = 'cash-pop';
+  el.innerHTML = `<b>${profit === null ? '+1 venta' : esc(eur(profit, true))}</b><span>${h.today >= h.T ? 'objetivo de hoy cumplido' : `${h.today} de ${h.T} hoy`}</span>`;
+  document.querySelectorAll('.cash-pop').forEach((x) => x.remove());
+  document.body.appendChild(el); setTimeout(() => el.remove(), 2700);
 }
 
 /* ================= daily target, XP, streak ================= */
@@ -1594,6 +1579,11 @@ const ladderFrom = () => S0().ladderFrom || '2026-11-01';
 function ladderValue() {
   const from = ladderFrom();
   return sum(L('sales').filter((x) => !x.cancelled && x.date >= from).map(profitOf)) - sum(L('spend').filter((x) => x.kind === 'negocio' && x.date >= from).map((x) => n0(x.amount)));
+}
+function ladderRow() {
+  const lv = ladderOf(), v = ladderValue(), reached = lv.filter((l) => v >= n0(l.amount)).length, next = lv[reached];
+  const prev = reached ? n0(lv[reached - 1].amount) : 0, p = next ? Math.max(0, Math.min(1, (v - prev) / (n0(next.amount) - prev))) : 1;
+  return `<button class="panel ldrow" data-a="tab" data-v="metas"><span class="eyebrow">Escalera · nivel ${reached} de ${lv.length}</span><b>${next ? `${esc(next.title)}: faltan ${eur(n0(next.amount) - v)}` : 'Escalera completa'}</b>${pbar(p)}<span class="mut sm2">Objetivos ›</span></button>`;
 }
 function ladderCard(full) {
   const lv = ladderOf(), v = ladderValue(), paid = S0().ladderPaid || {};
@@ -1769,9 +1759,7 @@ async function saveLabel(withSale) {
   lsSet('lg_lbacc', acc);
   LBQ.shift();
   Object.assign(st.sheet.ctx, { model: m.id, acc, err: '' });
-  const left = n0((model(m.id) || {}).home);
-  const lowTxt = !res ? '' : left <= 0 ? ' · agotado: quita sus anuncios' : left <= lowStockN() ? ` · quedan ${left}: oculta anuncios` : '';
-  toast(`#${n} sellada${res && res.profit !== null ? ' · ' + eur(res.profit, true) : ''}${lowTxt}`);
+  toast(`#${n} sellada${res && res.profit !== null ? ' · ' + eur(res.profit, true) : ''}`);
   await refreshLabels();
 }
 async function mergeLabels() {
@@ -3179,6 +3167,11 @@ async function recalcAllOrders(log) {
 }
 // v13 (one time, from the export review of 21 Oct): cushion 50 €, sales made with 0 at home become reserved,
 // a typed cost that a sibling with the same 1688 price + weight contradicts takes the order-based one, every sale gets the cost of its box.
+async function migrate14() {
+  if (await db.getMeta('m14-sanda')) return;
+  for (const m of L('models').filter((x) => /sanda/i.test(x.name || '') && x.status !== 'descartado')) await db.patch(C.models, m.id, { status: 'descartado' });
+  await db.setMeta('m14-sanda', true);
+}
 async function migrate13() {
   const cur = db.get(C.settings, 'settings'); if (!cur || n0(cur.migr) >= 13) return;
   const log = [], t = todayKey();
@@ -3264,6 +3257,7 @@ async function boot() {
   await migrate11().catch((e) => console.warn('migrate11', e));
   await migrate12().catch((e) => console.warn('migrate12', e));
   await migrate13().catch((e) => console.warn('migrate13', e));
+  await migrate14().catch((e) => console.warn('migrate14', e));
   shell(); render();
   const ta = $('#comp-text'), fi = $('#comp-file');
   ta.addEventListener('input', () => { ta.style.height = ''; ta.style.height = Math.min(140, ta.scrollHeight) + 'px'; });
