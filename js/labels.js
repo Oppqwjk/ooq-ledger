@@ -142,7 +142,7 @@ export async function build(items, sizeKey = '100x150') {
   const { PDFDocument, StandardFonts, rgb, degrees } = await lib();
   const out = await PDFDocument.create();
   const font = await out.embedFont(StandardFonts.Helvetica);
-  const T = 13, M = 5; // thin text strip on top, margin
+  const T = 10, M = 4; // thin text strip on top, margin
   for (const it of items) {
     const src = await PDFDocument.load(it.bytes, { ignoreEncryption: true });
     const sp = src.getPage(0), cb = sp.getCropBox(), c = it.crop || { x: 0, y: 0, w: 1, h: 1 };
@@ -162,7 +162,7 @@ export async function build(items, sizeKey = '100x150') {
     const at = { 0: { x: L, y: B }, 90: { x: L + h, y: B }, 180: { x: L + w, y: B + h }, 270: { x: L, y: B + w } }[q];
     page.drawPage(emb, { x: at.x, y: at.y, width: w, height: h, rotate: degrees(q) });
     if (it.text) {
-      const t = latin1(it.text), size = Math.min(8, (W - M * 2) / font.widthOfTextAtSize(t, 1));
+      const t = latin1(it.text), size = Math.min(6, (W - M * 2) / font.widthOfTextAtSize(t, 1));
       page.drawText(t, { x: (W - font.widthOfTextAtSize(t, size)) / 2, y: H - T + (T - size) / 2 + 1, size, font, color: rgb(0, 0, 0) });
     }
   }

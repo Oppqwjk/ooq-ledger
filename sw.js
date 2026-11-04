@@ -1,5 +1,5 @@
 // Offline cache. Bump VERSION on every deploy so installed apps pick up new files.
-const VERSION = 'ledger-v40';
+const VERSION = 'ledger-v41';
 const SHELL = [
   './', './index.html', './config.js', './manifest.webmanifest', './css/app.css',
   './js/app.js', './js/brain.js', './js/plan.js', './js/agent.js', './js/db.js', './js/sync.js', './js/loader.js', './js/labels.js', './vendor/supabase.js', './vendor/pdf-lib.min.js', './vendor/pdf.min.js', './vendor/pdf.worker.min.js',
@@ -29,7 +29,7 @@ self.addEventListener('fetch', (e) => {
 async function networkFirst(req, fallback) {
   const cache = await caches.open(VERSION);
   try {
-    const res = await fetch(req);
+    const res = await fetch(req, { cache: 'no-cache' }); // skip the 10-minute HTTP cache so a new version shows on the next open
     if (res && res.ok) cache.put(fallback || req, res.clone());
     return res;
   } catch {
