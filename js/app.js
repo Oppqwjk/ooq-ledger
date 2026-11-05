@@ -48,7 +48,7 @@ const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
 
 const STATUS = { ganador: 'Ganador', test: 'Test', espera: 'En espera', descartado: 'Descartado' };
 const SORDER = { ganador: 0, test: 1, espera: 2, descartado: 3 };
-const APP_V = 'v42';
+const APP_V = 'v43';
 const CATS = { personal: ['Comida', 'Ocio', 'Ropa', 'Transporte', 'Móvil y subs', 'Ahorro / retiro personal', 'Otros'], negocio: ['Boost Vinted', 'Envíos', 'Fotos y material', 'Otros negocio'] };
 // what a goal can measure; everything except "manual" and "task" is read from your data automatically
 const METRICS = {
@@ -1711,8 +1711,15 @@ async function addLabelFiles(files) {
   }
   if (st.tab !== 'etiquetas') setTab('etiquetas'); else renderSoon();
   for (const it of fresh) {
-    try { const a = await Lb.analyze(it.bytes); Object.assign(it, { crop: a.crop, src: a.src, rot: a.landscape ? 90 : 0, status: 'ready' }); it.img = Lb.thumb(it.src, it.rot); }
-    catch (e) { it.status = 'error'; it.error = e.message || String(e); }
+    try {
+      const found = await Lb.analyze(it.bytes);
+      if (!found.length) throw new Error('sin etiqueta');
+      // one PDF can hold several labels (one per page): each becomes its own row
+      const rows = found.map((a, k) => ({ ...(k ? { ...it, id: newId(), name: `${it.name} · pág. ${a.page + 1}` } : it), page: a.page, crop: a.crop, src: a.src, rot: a.landscape ? 90 : 0, status: 'ready' }));
+      rows.forEach((r) => { r.img = Lb.thumb(r.src, r.rot); });
+      Object.assign(it, rows[0]);
+      const at = lbS.items.indexOf(it); if (rows.length > 1 && at >= 0) lbS.items.splice(at + 1, 0, ...rows.slice(1));
+    } catch (e) { it.status = 'error'; it.error = e.message || String(e); }
     renderSoon();
   }
 }
@@ -1762,9 +1769,9 @@ async function printLabels() {
   let n = (await Lb.ofDay(t)).reduce((x, l) => Math.max(x, n0(l.n)), 0);
   const made = items.map((it) => ({ it, n: ++n })).sort((a, b) => (a.it.tag || '').localeCompare(b.it.tag || '') || a.n - b.n);
   let pdf;
-  try { pdf = await Lb.build(made.map((x) => ({ bytes: x.it.bytes, crop: x.it.crop, rot: x.it.rot, text: x.it.tag || '' })), lbSize()); } catch (e) { return lbErr('No se pudo crear el PDF: ' + (e.message || e)); }
+  try { pdf = await Lb.build(made.map((x) => ({ bytes: x.it.bytes, page: x.it.page || 0, crop: x.it.crop, rot: x.it.rot, text: x.it.tag || '' })), lbSize()); } catch (e) { return lbErr('No se pudo crear el PDF: ' + (e.message || e)); }
   Lb.download(pdf, `ETIQUETAS_${t}.pdf`);
-  for (const x of made) await Lb.put({ id: newId(), day: t, n: x.n, at: nowISO(), tag: x.it.tag || '', modelName: '', name: x.it.name, bytes: x.it.bytes, crop: x.it.crop, rot: x.it.rot });
+  for (const x of made) await Lb.put({ id: newId(), day: t, n: x.n, at: nowISO(), tag: x.it.tag || '', modelName: '', name: x.it.name, bytes: x.it.bytes, page: x.it.page || 0, crop: x.it.crop, rot: x.it.rot });
   const by = {}; made.forEach((x) => { const k = x.it.tag || '—'; by[k] = (by[k] || 0) + 1; });
   lbS.items = lbS.items.filter((x) => !items.includes(x)); lbS.err = '';
   toast('Listo · empaqueta ' + Object.entries(by).map(([k, c]) => `${c}× ${k}`).join(', '));
@@ -1773,7 +1780,7 @@ async function printLabels() {
 async function printAgain() {
   const list = (await Lb.ofDay(todayKey())).sort((a, b) => tagOf(a).localeCompare(tagOf(b)) || a.n - b.n);
   if (!list.length) return;
-  Lb.download(await Lb.build(list.map((l) => ({ bytes: l.bytes, crop: l.crop, rot: l.rot || 0, text: tagOf(l) })), lbSize()), `ETIQUETAS_${todayKey()}.pdf`);
+  Lb.download(await Lb.build(list.map((l) => ({ bytes: l.bytes, page: l.page || 0, crop: l.crop, rot: l.rot || 0, text: tagOf(l) })), lbSize()), `ETIQUETAS_${todayKey()}.pdf`);
 }
 
 /* ---------------- sheets ---------------- */
