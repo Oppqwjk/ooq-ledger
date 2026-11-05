@@ -73,20 +73,33 @@ export const headerText = ({ n, tag }) => latin1(`#${n} · ${tag}`);
 export async function analyze(bytes) {
   const pdfjs = await viewer();
   const doc = await pdfjs.getDocument({ data: bytes.slice(0) }).promise;
-  const out = [];
+  const out = [], hash = await sha(bytes);
   try {
     for (let pn = 1; pn <= doc.numPages; pn++) {
       const page = await doc.getPage(pn);
       const base = page.getViewport({ scale: 1 }), small = Math.max(base.width, base.height) <= 520;
       if (!small && pn > 1 && out.length) { // extra A4 pages are usually instructions: only keep ones with a framed label
-        const r2 = await findLabel(page, false); if (r2 && r2.framed) out.push({ page: pn - 1, ...r2 });
+        const r2 = await findLabel(page, false); if (r2 && r2.framed) out.push({ page: pn - 1, key: (await textKey(page)) || `h:${hash}:${pn}`, ...r2 });
         continue;
       }
       const r = small ? await wholePage(page) : await findLabel(page, true);
-      if (r) out.push({ page: pn - 1, ...r });
+      if (r) out.push({ page: pn - 1, key: (await textKey(page)) || `h:${hash}:${pn}`, ...r });
     }
   } finally { doc.destroy(); }
   return out;
+}
+// what identifies a label: its tracking numbers (long codes printed as text), so the same label
+// downloaded twice is caught even if the files differ; image-only labels fall back to the file itself
+async function textKey(page) {
+  try {
+    const tc = await page.getTextContent();
+    const toks = (tc.items.map((i) => i.str).join(' ').toUpperCase().match(/[A-Z0-9]{10,}/g) || []).filter((t) => /\d{6}/.test(t));
+    return [...new Set(toks)].sort().join('|');
+  } catch { return ''; }
+}
+async function sha(bytes) {
+  try { const d = await crypto.subtle.digest('SHA-256', bytes); return [...new Uint8Array(d)].slice(0, 12).map((b) => b.toString(16).padStart(2, '0')).join(''); }
+  catch { return String(bytes.length); }
 }
 async function draw(page) {
   const vp = page.getViewport({ scale: 1.5 });
