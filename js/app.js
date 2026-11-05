@@ -48,7 +48,7 @@ const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
 
 const STATUS = { ganador: 'Ganador', test: 'Test', espera: 'En espera', descartado: 'Descartado' };
 const SORDER = { ganador: 0, test: 1, espera: 2, descartado: 3 };
-const APP_V = 'v43';
+const APP_V = 'v44';
 const CATS = { personal: ['Comida', 'Ocio', 'Ropa', 'Transporte', 'Móvil y subs', 'Ahorro / retiro personal', 'Otros'], negocio: ['Boost Vinted', 'Envíos', 'Fotos y material', 'Otros negocio'] };
 // what a goal can measure; everything except "manual" and "task" is read from your data automatically
 const METRICS = {
@@ -1710,22 +1710,32 @@ async function addLabelFiles(files) {
     lbS.items.push(it); fresh.push(it);
   }
   if (st.tab !== 'etiquetas') setTab('etiquetas'); else renderSoon();
+  let dups = 0, old = 0; const hist = await Lb.all().catch(() => []);
   for (const it of fresh) {
     try {
       const found = await Lb.analyze(it.bytes);
       if (!found.length) throw new Error('sin etiqueta');
       // one PDF can hold several labels (one per page): each becomes its own row
-      const rows = found.map((a, k) => ({ ...(k ? { ...it, id: newId(), name: `${it.name} · pág. ${a.page + 1}` } : it), page: a.page, crop: a.crop, src: a.src, rot: a.landscape ? 90 : 0, status: 'ready' }));
-      rows.forEach((r) => { r.img = Lb.thumb(r.src, r.rot); });
-      Object.assign(it, rows[0]);
-      const at = lbS.items.indexOf(it); if (rows.length > 1 && at >= 0) lbS.items.splice(at + 1, 0, ...rows.slice(1));
+      const rows = found.map((a, k) => ({ ...(k ? { ...it, id: newId(), name: `${it.name} · pág. ${a.page + 1}` } : it), page: a.page, key: a.key, crop: a.crop, src: a.src, rot: a.landscape ? 90 : 0, status: 'ready' }));
+      // doubles: the same label already in the list is dropped; one printed before is kept but left out
+      const keep = [];
+      for (const r of rows) {
+        if (r.key && lbS.items.some((x) => x !== it && x.status === 'ready' && x.key === r.key) || keep.some((x) => x.key === r.key)) { dups++; continue; }
+        const h = r.key && hist.find((x) => x.key === r.key);
+        if (h) { r.printed = h.day; r.skip = true; old++; }
+        r.img = Lb.thumb(r.src, r.rot); keep.push(r);
+      }
+      const at = lbS.items.indexOf(it);
+      if (!keep.length) { if (at >= 0) lbS.items.splice(at, 1); }
+      else { Object.assign(it, keep[0]); if (keep.length > 1 && at >= 0) lbS.items.splice(at + 1, 0, ...keep.slice(1)); }
     } catch (e) { it.status = 'error'; it.error = e.message || String(e); }
     renderSoon();
   }
+  if (dups || old) toast([dups ? `${dups} repetida${dups === 1 ? '' : 's'} quitada${dups === 1 ? '' : 's'}` : '', old ? `${old} ya impresa${old === 1 ? '' : 's'} (no se incluye${old === 1 ? '' : 'n'})` : ''].filter(Boolean).join(' · '));
 }
 function lbRow(it, i, ms, accs, tags) {
   const head2 = `<div class="lbth">${it.status === 'ready' ? `<img src="${it.img}" alt="">` : it.status === 'error' ? '<span class="neg sm2">PDF no válido</span>' : '<span class="mut sm2">recortando…</span>'}</div>`;
-  return `<div class="lbrow${it.status === 'error' ? ' bad' : ''}">${head2}<div class="lbr-f"><div class="lbr-top"><b>#${i + 1}</b><span class="mut sm2">${esc(it.name)}</span></div>
+  return `<div class="lbrow${it.status === 'error' ? ' bad' : ''}${it.skip ? ' skip' : ''}">${head2}<div class="lbr-f"><div class="lbr-top"><b>#${i + 1}</b><span class="mut sm2">${esc(it.name)}</span></div>${it.printed ? `<div class="lbdup"><span>Ya impresa ${it.printed === todayKey() ? 'hoy' : 'el ' + shortDate(it.printed)}${it.skip ? ' · no se incluye' : ''}</span><button type="button" class="lnk" data-a="lbi-skip" data-i="${i}">${it.skip ? 'Imprimir igual' : 'No incluir'}</button></div>` : ''}
     <div class="chips">${tags.length ? tags.map((t) => `<button type="button" class="chip" data-a="lbi-tag" data-i="${i}" data-v="${esc(t)}" aria-pressed="${t === it.tag}">${esc(t)}</button>`).join('') : '<span class="mut sm2">Pon el SKU a tus relojes en Stock para elegirlo aquí.</span>'}</div></div>
     <div class="lbr-x"><button type="button" class="iconbtn" data-a="lbi-rot" data-i="${i}" aria-label="Girar" title="Girar">↻</button><button type="button" class="del" data-a="lbi-del" data-i="${i}" aria-label="Quitar">×</button></div></div>`;
 }
@@ -1735,7 +1745,7 @@ function viewLabels() {
   const drop = `<label class="dropz${items.length ? '' : ' big'}" id="lb-drop"><input type="file" id="lb-file" accept="application/pdf,.pdf" multiple hidden><b>${items.length ? '+ Añadir más' : 'Arrastra aquí todas las etiquetas de Vinted'}</b><span>${items.length ? 'se recortan solas' : 'o toca para elegirlas · se recortan solas, sin hoja en blanco'}</span></label>`;
   const opts = `<div class="lbopts"><div class="seg sm">${Object.entries(Lb.SIZES).map(([k, v]) => `<button data-a="lb-size" data-v="${k}" aria-pressed="${k === size}">${v.label}</button>`).join('')}</div>
     <button type="button" class="lnk" data-a="tab" data-v="stock">SKU de los relojes →</button></div>`;
-  const ready = items.filter((x) => x.status === 'ready').length, busy = items.some((x) => x.status === 'reading');
+  const ready = items.filter((x) => x.status === 'ready' && !x.skip).length, busy = items.some((x) => x.status === 'reading');
   const list = items.length ? panel(`${items.length} etiqueta${items.length === 1 ? '' : 's'} para imprimir`, `${opts}<div class="lbrows">${items.map((it, i) => lbRow(it, i, ms, accs, tags)).join('')}</div>
       <div class="stack pad"><div class="err" id="lb-err">${esc(lbS.err)}</div><button class="primary" data-a="lb-go"${busy || !ready ? ' disabled' : ''}>${busy ? 'Recortando…' : `Descargar ${ready} etiqueta${ready === 1 ? '' : 's'} (${Lb.SIZES[size].label})`}</button>
       <div class="hint">Un PDF con una etiqueta por página, listo para la impresora de etiquetas. El color sale escrito arriba en pequeño, nada más.</div></div>`, '<button class="lnk" data-a="lb-clear">Vaciar</button>') : '';
@@ -1764,14 +1774,14 @@ function afterLabels() {
 }
 // make the print file: cut + upright + colour on top, one label per page; log the sales if asked
 async function printLabels() {
-  const items = lbS.items.filter((x) => x.status === 'ready'), t = todayKey();
+  const items = lbS.items.filter((x) => x.status === 'ready' && !x.skip), t = todayKey();
   if (!items.length) return lbErr('No hay etiquetas listas.');
   let n = (await Lb.ofDay(t)).reduce((x, l) => Math.max(x, n0(l.n)), 0);
   const made = items.map((it) => ({ it, n: ++n })).sort((a, b) => (a.it.tag || '').localeCompare(b.it.tag || '') || a.n - b.n);
   let pdf;
   try { pdf = await Lb.build(made.map((x) => ({ bytes: x.it.bytes, page: x.it.page || 0, crop: x.it.crop, rot: x.it.rot, text: x.it.tag || '' })), lbSize()); } catch (e) { return lbErr('No se pudo crear el PDF: ' + (e.message || e)); }
   Lb.download(pdf, `ETIQUETAS_${t}.pdf`);
-  for (const x of made) await Lb.put({ id: newId(), day: t, n: x.n, at: nowISO(), tag: x.it.tag || '', modelName: '', name: x.it.name, bytes: x.it.bytes, page: x.it.page || 0, crop: x.it.crop, rot: x.it.rot });
+  for (const x of made) await Lb.put({ id: newId(), day: t, n: x.n, at: nowISO(), tag: x.it.tag || '', modelName: '', name: x.it.name, key: x.it.key || '', bytes: x.it.bytes, page: x.it.page || 0, crop: x.it.crop, rot: x.it.rot });
   const by = {}; made.forEach((x) => { const k = x.it.tag || '—'; by[k] = (by[k] || 0) + 1; });
   lbS.items = lbS.items.filter((x) => !items.includes(x)); lbS.err = '';
   toast('Listo · empaqueta ' + Object.entries(by).map(([k, c]) => `${c}× ${k}`).join(', '));
@@ -2684,6 +2694,7 @@ document.addEventListener('click', async (e) => {
     case 'lbi-tag': { const it = lbS.items[Number(b.dataset.i)]; if (!it) break; it.tag = v; lsSet('lg_lbtag', v); const mid = tagModel()[v]; if (mid && model(mid)) { it.modelId = mid; const p = priceChips(model(mid))[0]; if (p) it.price = pTxt(p); } renderSoon(); break; }
     case 'lbi-rot': { const it = lbS.items[Number(b.dataset.i)]; if (it && it.src) { it.rot = (it.rot + 90) % 360; it.img = Lb.thumb(it.src, it.rot); renderSoon(); } break; }
     case 'lbi-del': lbS.items.splice(Number(b.dataset.i), 1); renderSoon(); break;
+    case 'lbi-skip': { const it = lbS.items[Number(b.dataset.i)]; if (it) { it.skip = !it.skip; renderSoon(); } break; }
     case 'lb-clear': lbS.items = []; lbS.err = ''; renderSoon(); break;
     case 'lb-size': lsSet('lg_lbsize', v); renderSoon(); break;
     case 'dtarget': await patchSettings({ dailyTarget: Number(v) }); break;
